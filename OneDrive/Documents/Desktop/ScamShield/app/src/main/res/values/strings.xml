@@ -1,0 +1,25 @@
+<resources>
+    <string name="app_name">ScamShield</string>
+    <string name="settings_title">Settings</string>
+    <string name="protection_title">PROTECTION</string>
+    <string name="scam_detection_alerts">Scam Detection Alerts</string>
+    <string name="scam_detection_desc">Show warnings when suspicious keywords are detected.</string>
+    <string name="notification_sounds">Notification Sounds</string>
+    <string name="vibration">Vibration</string>
+    <string name="open_app_permissions">Open App Permissions</string>
+    <string name="mic_permission_warning">Microphone permission is required for live scam detection. Tap \'Open App Permissions\' to enable.</string>
+    <string name="appearance_title">APPEARANCE</string>
+    <string name="dark_mode">Dark Mode</string>
+    <string name="about_title">ABOUT</string>
+    <string name="app_version_text">ScamShield v1.0</string>
+    <string name="about_desc">Final Year Academic Project&#10;Built for Android Educational Demo.</string>
+    <string name="help_feedback">Help &amp; Feedback</string>
+
+    <!-- Consent strings -->
+    <string name="consent_title">Privacy &amp; Consent</string>
+    <string name="consent_message">ScamShield can listen for suspicious keywords during calls to warn you about potential scams.\n\nBy consenting you agree that the app will process call audio locally on your device to detect scam-related keywords. No audio will be uploaded unless you explicitly opt-in to cloud services. The feature may not work reliably on all devices due to OS restrictions.\n\nDo you consent to enable live detection?</string>
+    <string name="consent_accept">I Consent</string>
+    <string name="consent_decline">Decline</string>
+    <string name="view_privacy_policy">View Privacy Policy</string>
+    <string name="detected_format">Detected: %1$s</string>
+</resources>
