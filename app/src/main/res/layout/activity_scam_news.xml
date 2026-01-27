@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:padding="16dp">
+
+    <TextView
+        android:text="Scam Awareness\n\n• Never share OTP\n• Banks never ask passwords\n• Avoid urgent calls\n• Do not click unknown links\n• Verify only on official apps"
+        android:textSize="16sp"/>
+</ScrollView>
