@@ -1,10 +1,14 @@
 package com.shreyanshi.scamshield.ui.history;
 
+import android.content.Intent;
+import android.net.Uri;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
+import android.widget.ImageButton;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.recyclerview.widget.RecyclerView;
@@ -49,6 +53,14 @@ public class HistoryAdapter extends RecyclerView.Adapter<HistoryAdapter.ViewHold
         holder.btnBlock.setOnClickListener(v -> {
             model.toggleBlocked();
             notifyItemChanged(position);
+            String msg = model.isBlocked() ? "Number Blocked" : "Number Unblocked";
+            Toast.makeText(v.getContext(), msg, Toast.LENGTH_SHORT).show();
+        });
+
+        holder.btnCall.setOnClickListener(v -> {
+            Intent intent = new Intent(Intent.ACTION_DIAL);
+            intent.setData(Uri.parse("tel:" + model.getPhoneNumber()));
+            v.getContext().startActivity(intent);
         });
     }
 
@@ -61,6 +73,7 @@ public class HistoryAdapter extends RecyclerView.Adapter<HistoryAdapter.ViewHold
 
         TextView tvPhone, tvDate, tvStatus;
         Button btnBlock;
+        ImageButton btnCall;
 
         public ViewHolder(@NonNull View itemView) {
             super(itemView);
@@ -68,6 +81,7 @@ public class HistoryAdapter extends RecyclerView.Adapter<HistoryAdapter.ViewHold
             tvDate = itemView.findViewById(R.id.tvDate);
             tvStatus = itemView.findViewById(R.id.tvStatus);
             btnBlock = itemView.findViewById(R.id.btnBlock);
+            btnCall = itemView.findViewById(R.id.btnCallHistory);
         }
     }
 }

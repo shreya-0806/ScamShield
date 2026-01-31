@@ -24,7 +24,7 @@ import java.util.List;
 public class ContactsAdapter extends RecyclerView.Adapter<ContactsAdapter.ViewHolder> {
 
     private List<ContactModel> contacts;
-    private List<ContactModel> contactsFull; 
+    private List<ContactModel> contactsFull;
 
     public ContactsAdapter(List<ContactModel> contacts) {
         this.contacts = contacts;
@@ -45,11 +45,18 @@ public class ContactsAdapter extends RecyclerView.Adapter<ContactsAdapter.ViewHo
 
         holder.tvName.setText(model.getName());
         holder.tvNumber.setText(model.getNumber());
-        
+
         if (model.getName() != null && !model.getName().isEmpty()) {
             holder.tvInitial.setText(model.getName().substring(0, 1).toUpperCase());
         } else {
             holder.tvInitial.setText("?");
+        }
+
+        // Toggle Favorite Icon
+        if (model.isFavorite()) {
+            holder.btnStar.setImageResource(android.R.drawable.btn_star_big_on);
+        } else {
+            holder.btnStar.setImageResource(android.R.drawable.btn_star_big_off);
         }
 
         holder.itemView.setOnClickListener(v -> {
@@ -75,8 +82,19 @@ public class ContactsAdapter extends RecyclerView.Adapter<ContactsAdapter.ViewHo
         });
 
         holder.btnStar.setOnClickListener(v -> {
-            holder.btnStar.setImageResource(android.R.drawable.btn_star_big_on);
-            Toast.makeText(v.getContext(), "Marked as Favorite", Toast.LENGTH_SHORT).show();
+            boolean newState = !model.isFavorite();
+            model.setFavorite(newState);
+            
+            // Also update in contactsFull if they are different references
+            for (ContactModel m : contactsFull) {
+                if (m.getNumber().equals(model.getNumber())) {
+                    m.setFavorite(newState);
+                    break;
+                }
+            }
+            
+            notifyItemChanged(position);
+            Toast.makeText(v.getContext(), newState ? "Marked as Favorite" : "Removed from Favorites", Toast.LENGTH_SHORT).show();
         });
     }
 
@@ -101,13 +119,14 @@ public class ContactsAdapter extends RecyclerView.Adapter<ContactsAdapter.ViewHo
 
     public void filter(String text) {
         contacts.clear();
-        if (text.isEmpty()) {
+        if (text == null || text.isEmpty()) {
             contacts.addAll(contactsFull);
         } else {
             String query = text.toLowerCase().trim();
             for (ContactModel item : contactsFull) {
-                if (item.getName().toLowerCase().contains(query) || 
-                    item.getNumber().contains(query)) {
+                String name = item.getName() != null ? item.getName().toLowerCase() : "";
+                String number = item.getNumber() != null ? item.getNumber() : "";
+                if (name.contains(query) || number.contains(query)) {
                     contacts.add(item);
                 }
             }

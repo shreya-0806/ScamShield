@@ -4,10 +4,12 @@ public class ContactModel {
 
     private String name;
     private String number;
+    private boolean isFavorite;
 
     public ContactModel(String name, String number) {
         this.name = name;
         this.number = number;
+        this.isFavorite = false;
     }
 
     public String getName() {
@@ -16,5 +18,13 @@ public class ContactModel {
 
     public String getNumber() {
         return number;
+    }
+
+    public boolean isFavorite() {
+        return isFavorite;
+    }
+
+    public void setFavorite(boolean favorite) {
+        isFavorite = favorite;
     }
 }

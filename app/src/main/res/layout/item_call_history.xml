@@ -5,18 +5,18 @@
     android:orientation="horizontal"
     android:padding="12dp"
     android:gravity="center_vertical"
-    android:background="#1E1E1E"
+    android:background="?attr/selectableItemBackground"
     android:layout_marginBottom="6dp">
 
     <!-- Icon -->
     <TextView
+        android:id="@+id/tvIcon"
         android:layout_width="40dp"
         android:layout_height="40dp"
         android:gravity="center"
         android:text="📞"
         android:textSize="18sp"
-        android:background="#333333"
-        android:textColor="@android:color/white"
+        android:background="@drawable/circle_bg"
         android:layout_marginEnd="12dp"/>
 
     <!-- Call Info -->
@@ -33,7 +33,7 @@
             android:text="Phone Number"
             android:textSize="16sp"
             android:textStyle="bold"
-            android:textColor="@android:color/white"/>
+            android:textColor="?android:attr/textColorPrimary"/>
 
         <TextView
             android:id="@+id/tvDate"
@@ -41,7 +41,7 @@
             android:layout_height="wrap_content"
             android:text="Date &amp; Time"
             android:textSize="14sp"
-            android:textColor="#BDBDBD"/>
+            android:textColor="?android:attr/textColorSecondary"/>
 
         <TextView
             android:id="@+id/tvStatus"
@@ -53,12 +53,30 @@
             android:textColor="#4CAF50"/>
     </LinearLayout>
 
-    <!-- Block Button -->
-    <Button
-        android:id="@+id/btnBlock"
+    <!-- Action Buttons -->
+    <LinearLayout
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="Block"
-        android:textColor="@android:color/white"
-        android:backgroundTint="#D32F2F"/>
+        android:orientation="horizontal"
+        android:gravity="center">
+
+        <ImageButton
+            android:id="@+id/btnCallHistory"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:src="@android:drawable/ic_menu_call"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="Call"
+            android:tint="#4CAF50"
+            android:layout_marginEnd="8dp"/>
+
+        <Button
+            android:id="@+id/btnBlock"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Block"
+            android:textSize="12sp"
+            android:textColor="@android:color/white"
+            android:backgroundTint="#D32F2F"/>
+    </LinearLayout>
 </LinearLayout>
