@@ -51,7 +51,10 @@
         <service android:name="com.shreyanshi.scamshield.services.ScamOverlayService"
             android:enabled="true"
             android:exported="false"
-            android:foregroundServiceType="specialUse" />
+            android:foregroundServiceType="specialUse">
+            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Displaying real-time scam alerts during phone calls" />
+        </service>
 
         <service android:name="com.shreyanshi.scamshield.services.LiveDetectionService"
             android:enabled="true"

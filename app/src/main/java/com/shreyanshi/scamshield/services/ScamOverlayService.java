@@ -6,6 +6,7 @@ import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.Service;
 import android.content.Intent;
+import android.content.pm.ServiceInfo;
 import android.graphics.PixelFormat;
 import android.net.Uri;
 import android.os.Build;
@@ -32,24 +33,31 @@ public class ScamOverlayService extends Service {
     @Override
     public void onCreate() {
         super.onCreate();
-        startForegroundService();
+        startForegroundInternal();
     }
 
-    private void startForegroundService() {
-        String CHANNEL_ID = "scam_shield_service";
+    private void startForegroundInternal() {
+        String CHANNEL_ID = "scam_shield_overlay_channel";
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            NotificationChannel channel = new NotificationChannel(CHANNEL_ID, "Scam Monitoring", NotificationManager.IMPORTANCE_LOW);
+            NotificationChannel channel = new NotificationChannel(CHANNEL_ID, "Scam Overlay Service", NotificationManager.IMPORTANCE_LOW);
             getSystemService(NotificationManager.class).createNotificationChannel(channel);
         }
 
         Notification notification = new NotificationCompat.Builder(this, CHANNEL_ID)
-                .setContentTitle("ScamShield Active")
-                .setContentText("Monitoring for suspicious keywords...")
-                .setSmallIcon(android.R.drawable.ic_dialog_info)
+                .setContentTitle("ScamShield Overlay Active")
+                .setContentText("Ready to show alerts")
+                .setSmallIcon(android.R.drawable.ic_dialog_alert)
                 .setPriority(NotificationCompat.PRIORITY_LOW)
                 .build();
 
-        startForeground(101, notification);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            startForeground(101, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE);
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            // specialUse was added in API 34, for older versions we can just start foreground
+            startForeground(101, notification);
+        } else {
+            startForeground(101, notification);
+        }
     }
 
     @Override
@@ -63,6 +71,8 @@ public class ScamOverlayService extends Service {
             showScamOverlay(keywords);
         } else if ("HIDE_OVERLAY".equals(action)) {
             hideScamOverlay();
+        } else if ("STOP_MONITORING".equals(action)) {
+            stopSelf();
         }
 
         return START_STICKY;
@@ -70,12 +80,23 @@ public class ScamOverlayService extends Service {
 
     @SuppressLint("InflateParams")
     private void showScamOverlay(String keywords) {
-        if (isOverlayShowing) return;
+        if (isOverlayShowing) {
+            // Update existing overlay if already showing
+            try {
+                TextView tvKeywords = overlayView.findViewById(R.id.tvOverlayKeywords);
+                if (tvKeywords != null) {
+                    tvKeywords.setText("Suspicious Keyword: " + keywords);
+                }
+                return;
+            } catch (Exception e) {
+                hideScamOverlay();
+            }
+        }
 
         // Check for overlay permission
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this)) {
             Log.e(TAG, "Permission denied: SYSTEM_ALERT_WINDOW");
-            Toast.makeText(this, "Please enable 'Display over other apps' permission for ScamShield", Toast.LENGTH_LONG).show();
+            Toast.makeText(this, "Please enable 'Display over other apps' permission", Toast.LENGTH_LONG).show();
             return;
         }
 
@@ -85,16 +106,23 @@ public class ScamOverlayService extends Service {
 
             TextView tvKeywords = overlayView.findViewById(R.id.tvOverlayKeywords);
             if (tvKeywords != null) {
-                tvKeywords.setText("Suspicious Keyword: " + keywords);
+                tvKeywords.setText("Suspicious Activity: " + keywords);
+            }
+
+            int layoutType;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                layoutType = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY;
+            } else {
+                layoutType = WindowManager.LayoutParams.TYPE_PHONE;
             }
 
             WindowManager.LayoutParams params = new WindowManager.LayoutParams(
                     WindowManager.LayoutParams.MATCH_PARENT,
                     WindowManager.LayoutParams.WRAP_CONTENT,
-                    Build.VERSION.SDK_INT >= Build.VERSION_CODES.O ?
-                            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY :
-                            WindowManager.LayoutParams.TYPE_PHONE,
-                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON,
+                    layoutType,
+                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | 
+                    WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON |
+                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
                     PixelFormat.TRANSLUCENT);
 
             params.gravity = Gravity.TOP;
