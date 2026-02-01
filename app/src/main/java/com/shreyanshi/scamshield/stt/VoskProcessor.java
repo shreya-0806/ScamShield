@@ -31,7 +31,7 @@ public class VoskProcessor implements SpeechProcessor {
     public boolean isAvailable() {
         File m = new File(modelPath);
         if (!m.exists() || !m.isDirectory()) {
-            Log.w(TAG, "Model folder missing at: " + modelPath);
+            Log.w(TAG, "Model folder missing at: " + modelPath + ". Offline detection will not work.");
             return false;
         }
 
@@ -77,18 +77,17 @@ public class VoskProcessor implements SpeechProcessor {
 
                     while (running) {
                         String json = (String) getPartial.invoke(recognizerInstance);
-                        if (json == null || json.isEmpty() || json.contains("\"partial\" : \"\"")) {
-                            json = (String) getResult.invoke(recognizerInstance);
-                        }
-
-                        if (json != null && !json.isEmpty()) {
+                        // Check partial results for instant detection
+                        if (json != null && !json.isEmpty() && !json.contains("\"partial\" : \"\"")) {
                             String text = extractTextFromVoskJson(json);
                             if (text != null && !text.isEmpty()) {
-                                Log.d(TAG, "HEARD: " + text); // This helps you see what it hears
+                                Log.v(TAG, "Hearing (Partial): " + text);
                                 checkKeywords(text);
                             }
                         }
-                        Thread.sleep(500);
+                        
+                        // Small sleep to prevent CPU hammering
+                        Thread.sleep(300);
                     }
                 } catch (Exception e) {
                     Log.e(TAG, "Poll Thread Error: " + e.getMessage());
@@ -105,15 +104,21 @@ public class VoskProcessor implements SpeechProcessor {
 
     private void checkKeywords(String text) {
         String lower = text.toLowerCase();
-        String[] keywords = {"otp", "password", "pin", "bank", "transfer", "money", "verify", "card", "upi", "paytm"};
+        // Expanded keyword list for better detection
+        String[] keywords = {
+            "otp", "password", "pin", "bank", "transfer", "money", 
+            "verify", "card", "upi", "paytm", "blocked", "account", "locked"
+        };
+        
         for (String k : keywords) {
             if (lower.contains(k)) {
-                Log.w(TAG, "SCAM KEYWORD DETECTED: " + k);
+                Log.w(TAG, "!!! SCAM KEYWORD DETECTED: " + k + " in text: " + text);
                 Intent i = new Intent("com.shreyanshi.scamshield.VOSK_DETECTED");
                 i.putExtra("keywords", k);
                 i.putExtra("text", text);
                 context.sendBroadcast(i);
-                break;
+                // Don't break here if we want to log everything, but one broadcast is enough
+                break; 
             }
         }
     }
