@@ -8,7 +8,6 @@ import android.app.Service;
 import android.content.Intent;
 import android.content.pm.ServiceInfo;
 import android.graphics.PixelFormat;
-import android.net.Uri;
 import android.os.Build;
 import android.os.IBinder;
 import android.provider.Settings;
@@ -25,7 +24,7 @@ import androidx.core.app.NotificationCompat;
 import com.shreyanshi.scamshield.R;
 
 public class ScamOverlayService extends Service {
-    private static final String TAG = "ScamOverlayService";
+    private static final String TAG = "ScamShield-Overlay";
     private WindowManager windowManager;
     private View overlayView;
     private boolean isOverlayShowing = false;
@@ -33,30 +32,36 @@ public class ScamOverlayService extends Service {
     @Override
     public void onCreate() {
         super.onCreate();
+        // Call this immediately to satisfy Android 14 requirements
         startForegroundInternal();
     }
 
     private void startForegroundInternal() {
-        String CHANNEL_ID = "scam_shield_overlay_channel";
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            NotificationChannel channel = new NotificationChannel(CHANNEL_ID, "Scam Overlay Service", NotificationManager.IMPORTANCE_LOW);
-            getSystemService(NotificationManager.class).createNotificationChannel(channel);
-        }
+        try {
+            String CHANNEL_ID = "scam_shield_overlay_channel";
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                NotificationChannel channel = new NotificationChannel(CHANNEL_ID, "Scam Alert Overlay", NotificationManager.IMPORTANCE_LOW);
+                NotificationManager nm = getSystemService(NotificationManager.class);
+                if (nm != null) nm.createNotificationChannel(channel);
+            }
 
-        Notification notification = new NotificationCompat.Builder(this, CHANNEL_ID)
-                .setContentTitle("ScamShield Overlay Active")
-                .setContentText("Ready to show alerts")
-                .setSmallIcon(android.R.drawable.ic_dialog_alert)
-                .setPriority(NotificationCompat.PRIORITY_LOW)
-                .build();
+            Notification notification = new NotificationCompat.Builder(this, CHANNEL_ID)
+                    .setContentTitle("ScamShield is active")
+                    .setContentText("Monitoring for scam attempts...")
+                    .setSmallIcon(android.R.drawable.ic_dialog_alert)
+                    .setPriority(NotificationCompat.PRIORITY_LOW)
+                    .setOngoing(true)
+                    .build();
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            startForeground(101, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE);
-        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            // specialUse was added in API 34, for older versions we can just start foreground
-            startForeground(101, notification);
-        } else {
-            startForeground(101, notification);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                startForeground(101, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE);
+            } else {
+                startForeground(101, notification);
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to start foreground service: " + e.getMessage());
+            // On some Android 14 devices, we can't stop the crash if it's strictly backgrounded, 
+            // but the try-catch prevents the crash from taking down the whole process if handled by CallReceiver.
         }
     }
 
@@ -67,7 +72,6 @@ public class ScamOverlayService extends Service {
         String action = intent.getStringExtra("action");
         if ("SHOW_ALERT".equals(action)) {
             String keywords = intent.getStringExtra("keywords");
-            Log.d(TAG, "Showing Alert for: " + keywords);
             showScamOverlay(keywords);
         } else if ("HIDE_OVERLAY".equals(action)) {
             hideScamOverlay();
@@ -80,41 +84,26 @@ public class ScamOverlayService extends Service {
 
     @SuppressLint("InflateParams")
     private void showScamOverlay(String keywords) {
-        if (isOverlayShowing) {
-            // Update existing overlay if already showing
-            try {
-                TextView tvKeywords = overlayView.findViewById(R.id.tvOverlayKeywords);
-                if (tvKeywords != null) {
-                    tvKeywords.setText("Suspicious Keyword: " + keywords);
-                }
-                return;
-            } catch (Exception e) {
-                hideScamOverlay();
-            }
-        }
-
-        // Check for overlay permission
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this)) {
-            Log.e(TAG, "Permission denied: SYSTEM_ALERT_WINDOW");
-            Toast.makeText(this, "Please enable 'Display over other apps' permission", Toast.LENGTH_LONG).show();
             return;
         }
 
-        windowManager = (WindowManager) getSystemService(WINDOW_SERVICE);
         try {
+            if (isOverlayShowing) {
+                TextView tv = overlayView.findViewById(R.id.tvOverlayKeywords);
+                if (tv != null) tv.setText("Suspicious phrase: " + keywords);
+                return;
+            }
+
+            windowManager = (WindowManager) getSystemService(WINDOW_SERVICE);
             overlayView = LayoutInflater.from(this).inflate(R.layout.layout_scam_alert_overlay, null);
 
             TextView tvKeywords = overlayView.findViewById(R.id.tvOverlayKeywords);
-            if (tvKeywords != null) {
-                tvKeywords.setText("Suspicious Activity: " + keywords);
-            }
+            if (tvKeywords != null) tvKeywords.setText("Scam Detected: " + keywords);
 
-            int layoutType;
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                layoutType = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY;
-            } else {
-                layoutType = WindowManager.LayoutParams.TYPE_PHONE;
-            }
+            int layoutType = (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) ? 
+                             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY : 
+                             WindowManager.LayoutParams.TYPE_PHONE;
 
             WindowManager.LayoutParams params = new WindowManager.LayoutParams(
                     WindowManager.LayoutParams.MATCH_PARENT,
@@ -131,14 +120,11 @@ public class ScamOverlayService extends Service {
                 windowManager.addView(overlayView, params);
                 isOverlayShowing = true;
                 
-                // Set up dismiss button
                 View dismiss = overlayView.findViewById(R.id.btnDismissOverlay);
-                if (dismiss != null) {
-                    dismiss.setOnClickListener(v -> hideScamOverlay());
-                }
+                if (dismiss != null) dismiss.setOnClickListener(v -> hideScamOverlay());
             }
         } catch (Exception e) {
-            Log.e(TAG, "Failed to add overlay view", e);
+            Log.e(TAG, "Error showing overlay: " + e.getMessage());
         }
     }
 

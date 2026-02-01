@@ -33,7 +33,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 public class LiveDetectionService extends Service {
-    private static final String TAG = "LiveDetectionService";
+    private static final String TAG = "ScamShield-LiveDetect";
     public static final String ACTION_START = "com.shreyanshi.scamshield.ACTION_START_LIVE_DETECTION";
     public static final String ACTION_STOP = "com.shreyanshi.scamshield.ACTION_STOP_LIVE_DETECTION";
 
@@ -52,12 +52,15 @@ public class LiveDetectionService extends Service {
     private final List<String> SCAM_KEYWORDS = Arrays.asList(
             "otp", "one time password", "pin", "password", "account blocked", "verify your account",
             "bank", "transfer", "money", "verify", "card number", "upi", "paytm", "netbanking",
-            "reset password", "remote access", "confirm code", "lottery", "gift card", "customer care"
+            "reset password", "remote access", "confirm code", "lottery", "gift card", "customer care",
+            "blocked", "locked", "account"
     );
 
     @Override
     public void onCreate() {
         super.onCreate();
+        // Start foreground IMMEDIATELY to prevent Android 14 background start crash
+        startForegroundNotification();
         executorService.execute(this::initializeProcessors);
     }
 
@@ -71,8 +74,7 @@ public class LiveDetectionService extends Service {
                 voskReceiver = new BroadcastReceiver() {
                     @Override
                     public void onReceive(Context ctx, Intent intent) {
-                        if (intent == null) return;
-                        if ("com.shreyanshi.scamshield.VOSK_DETECTED".equals(intent.getAction())) {
+                        if (intent != null && "com.shreyanshi.scamshield.VOSK_DETECTED".equals(intent.getAction())) {
                             String keywords = intent.getStringExtra("keywords");
                             triggerAlert(keywords);
                         }
@@ -87,12 +89,14 @@ public class LiveDetectionService extends Service {
                 }
 
                 voskProcessor.start();
-                Log.i(TAG, "Using VoskProcessor for live detection");
+                Log.i(TAG, "VoskProcessor started successfully");
                 isInitialized = true;
                 return;
+            } else {
+                Log.w(TAG, "Vosk model not available, falling back to Google Speech");
             }
         } catch (Throwable t) {
-            Log.w(TAG, "VoskProcessor init failed: " + t.getMessage());
+            Log.e(TAG, "Vosk init error: " + t.getMessage());
         }
 
         // Fallback to Google SpeechRecognizer
@@ -109,6 +113,8 @@ public class LiveDetectionService extends Service {
                     
                     isInitialized = true;
                     restartListening();
+                } else {
+                    Log.e(TAG, "Google Speech Recognition not available");
                 }
             } catch (Exception e) {
                 Log.e(TAG, "Failed to create SpeechRecognizer", e);
@@ -129,14 +135,33 @@ public class LiveDetectionService extends Service {
     }
 
     private class LiveRecognitionListener implements RecognitionListener {
-        @Override public void onReadyForSpeech(android.os.Bundle params) { isListening = true; }
-        @Override public void onBeginningOfSpeech() { }
+        @Override public void onReadyForSpeech(android.os.Bundle params) { 
+            isListening = true; 
+            Log.d(TAG, "Recognition Ready");
+        }
+        @Override public void onBeginningOfSpeech() { Log.d(TAG, "Speech Beginning"); }
         @Override public void onRmsChanged(float rmsdB) { }
         @Override public void onBufferReceived(byte[] buffer) { }
-        @Override public void onEndOfSpeech() { isListening = false; }
+        @Override public void onEndOfSpeech() { 
+            isListening = false; 
+            Log.d(TAG, "Speech End");
+        }
 
         @Override
         public void onError(int error) {
+            String message;
+            switch (error) {
+                case SpeechRecognizer.ERROR_AUDIO: message = "Audio error"; break;
+                case SpeechRecognizer.ERROR_CLIENT: message = "Client error"; break;
+                case SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS: message = "Insufficient permissions"; break;
+                case SpeechRecognizer.ERROR_NETWORK: message = "Network error"; break;
+                case SpeechRecognizer.ERROR_NO_MATCH: message = "No match"; break;
+                case SpeechRecognizer.ERROR_RECOGNIZER_BUSY: message = "Recognizer busy"; break;
+                case SpeechRecognizer.ERROR_SERVER: message = "Server error"; break;
+                case SpeechRecognizer.ERROR_SPEECH_TIMEOUT: message = "Speech timeout"; break;
+                default: message = "Unknown error: " + error; break;
+            }
+            Log.e(TAG, "SpeechRecognizer Error: " + message);
             isListening = false;
             restartListeningWithDelay();
         }
@@ -162,6 +187,7 @@ public class LiveDetectionService extends Service {
             try {
                 speechRecognizer.startListening(recognizerIntent);
             } catch (Exception e) {
+                Log.e(TAG, "startListening failed: " + e.getMessage());
                 isListening = false;
             }
         }
@@ -169,7 +195,7 @@ public class LiveDetectionService extends Service {
 
     private void restartListeningWithDelay() {
         handler.removeCallbacksAndMessages(null);
-        handler.postDelayed(this::restartListening, 1000);
+        handler.postDelayed(this::restartListening, 2000);
     }
 
     private void processResults(@Nullable android.os.Bundle results) {
@@ -178,6 +204,7 @@ public class LiveDetectionService extends Service {
         if (texts == null || texts.isEmpty()) return;
         
         String joined = String.join(" ", texts).toLowerCase(Locale.getDefault());
+        Log.d(TAG, "Heard: " + joined);
         for (String k : SCAM_KEYWORDS) {
             if (joined.contains(k)) {
                 triggerAlert(k);
@@ -187,48 +214,66 @@ public class LiveDetectionService extends Service {
     }
 
     private void startForegroundNotification() {
-        String CHANNEL_ID = "live_detection_channel";
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            NotificationChannel channel = new NotificationChannel(CHANNEL_ID, "Live Detection", NotificationManager.IMPORTANCE_HIGH);
-            getSystemService(NotificationManager.class).createNotificationChannel(channel);
-        }
-        Notification notification = new NotificationCompat.Builder(this, CHANNEL_ID)
-                .setContentTitle("ScamShield - Monitoring Call")
-                .setContentText("Listening for suspicious activity...")
-                .setSmallIcon(android.R.drawable.ic_btn_speak_now)
-                .setPriority(NotificationCompat.PRIORITY_HIGH)
-                .build();
-        
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            startForeground(201, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE);
-        } else {
-            startForeground(201, notification);
+        try {
+            String CHANNEL_ID = "live_detection_channel";
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                NotificationChannel channel = new NotificationChannel(CHANNEL_ID, "Live Detection Monitoring", NotificationManager.IMPORTANCE_LOW);
+                NotificationManager nm = getSystemService(NotificationManager.class);
+                if (nm != null) nm.createNotificationChannel(channel);
+            }
+            Notification notification = new NotificationCompat.Builder(this, CHANNEL_ID)
+                    .setContentTitle("ScamShield - Call Monitor")
+                    .setContentText("Listening for suspicious patterns...")
+                    .setSmallIcon(android.R.drawable.ic_btn_speak_now)
+                    .setPriority(NotificationCompat.PRIORITY_LOW)
+                    .setOngoing(true)
+                    .build();
+            
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                startForeground(201, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE);
+            } else {
+                startForeground(201, notification);
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Could not start foreground: " + e.getMessage());
         }
     }
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
-        if (intent != null && ACTION_START.equals(intent.getAction())) {
-            startForegroundNotification();
-            if (isInitialized) {
-                if (usingVosk && voskProcessor != null) {
-                    if (!voskProcessor.isRunning()) voskProcessor.start();
-                } else {
-                    restartListening();
-                }
-            }
-        } else if (intent != null && ACTION_STOP.equals(intent.getAction())) {
+        if (intent != null && ACTION_STOP.equals(intent.getAction())) {
             stopSelf();
+            return START_NOT_STICKY;
         }
+        
+        // Ensure foreground notification is showing
+        startForegroundNotification();
+        
+        if (isInitialized) {
+            if (usingVosk && voskProcessor != null) {
+                if (!voskProcessor.isRunning()) voskProcessor.start();
+            } else {
+                restartListening();
+            }
+        }
+        
         return START_STICKY;
     }
 
     @Override
     public void onDestroy() {
         super.onDestroy();
+        Log.d(TAG, "Service Destroyed");
         if (voskProcessor != null) voskProcessor.stop();
-        if (speechRecognizer != null) speechRecognizer.destroy();
-        if (voskReceiver != null) unregisterReceiver(voskReceiver);
+        if (speechRecognizer != null) {
+            speechRecognizer.cancel();
+            speechRecognizer.destroy();
+        }
+        if (voskReceiver != null) {
+            try {
+                unregisterReceiver(voskReceiver);
+            } catch (Exception ignored) {}
+        }
         executorService.shutdownNow();
     }
 
