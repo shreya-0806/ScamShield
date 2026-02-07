@@ -4,9 +4,7 @@ import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.Service;
-import android.content.Context;
 import android.content.Intent;
-import android.content.pm.ServiceInfo;
 import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
@@ -18,17 +16,20 @@ import android.util.Log;
 
 import androidx.annotation.Nullable;
 import androidx.core.app.NotificationCompat;
+import androidx.core.content.ContextCompat;
+import android.Manifest;
+import android.content.pm.PackageManager;
 
-import com.shreyanshi.scamshield.stt.SpeechProcessor;
-import com.shreyanshi.scamshield.stt.VoskProcessor;
-
+import java.lang.reflect.Constructor;
+import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 
-public class LiveDetectionService extends Service implements SpeechProcessor.Listener {
+public class LiveDetectionService extends Service {
     private static final String TAG = "ScamShield-LiveDetect";
+    // Restore ACTION_START since CallReceiver references it; keep ACTION_STOP
     public static final String ACTION_START = "com.shreyanshi.scamshield.ACTION_START_LIVE_DETECTION";
     public static final String ACTION_STOP = "com.shreyanshi.scamshield.ACTION_STOP_LIVE_DETECTION";
 
@@ -37,8 +38,8 @@ public class LiveDetectionService extends Service implements SpeechProcessor.Lis
     private boolean isListening = false;
     private final Handler handler = new Handler(Looper.getMainLooper());
 
-    private VoskProcessor voskProcessor = null;
-    private boolean usingVosk = false;
+    private Object voskProcessor = null; // use reflection-based instance
+    private boolean usingVosk = false; // will track whether we successfully started Vosk
 
     private final List<String> SCAM_KEYWORDS = Arrays.asList(
             "otp", "one time password", "pin", "password", "account blocked", "verify your account",
@@ -52,14 +53,51 @@ public class LiveDetectionService extends Service implements SpeechProcessor.Lis
         super.onCreate();
         startForegroundNotification();
         
-        // Initialize Vosk
-        voskProcessor = new VoskProcessor(this, this);
-        if (voskProcessor.isAvailable()) {
-            usingVosk = true;
-            voskProcessor.start();
-            Log.i(TAG, "Vosk detection initialized");
-        } else {
-            Log.w(TAG, "Vosk model not found, falling back to Google Speech");
+        // Initialize Vosk only if we have RECORD_AUDIO permission
+        boolean hasRecordAudio = ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED;
+        if (!hasRecordAudio) {
+            Log.w(TAG, "Record audio permission missing — skipping Vosk initialization and falling back to Google Speech.");
+            setupGoogleSpeech();
+            return;
+        }
+
+        try {
+            // Reflectively construct com.shreyanshi.scamshield.stt.VoskProcessor(Context, Object)
+            Class<?> voskCls = Class.forName("com.shreyanshi.scamshield.stt.VoskProcessor");
+            Constructor<?> ctor = voskCls.getConstructor(android.content.Context.class, Object.class);
+            voskProcessor = ctor.newInstance(this, this);
+
+            Method isAvailable = voskCls.getMethod("isAvailable");
+            Object availObj = isAvailable.invoke(voskProcessor);
+            boolean avail = (availObj instanceof Boolean) && ((Boolean) availObj);
+            if (avail) {
+                // mark that Vosk is actually available and will be used
+                usingVosk = true;
+                try {
+                    Method start = voskCls.getMethod("start");
+                    start.invoke(voskProcessor);
+                    Log.i(TAG, "Vosk detection initialized");
+                } catch (SecurityException se) {
+                    Log.e(TAG, "SecurityException starting Vosk (FGS/permissions): " + se.getMessage());
+                    usingVosk = false;
+                    setupGoogleSpeech();
+                } catch (Exception e) {
+                    Log.e(TAG, "Failed to start Vosk processor, falling back to Google Speech", e);
+                    usingVosk = false;
+                    setupGoogleSpeech();
+                }
+            } else {
+                Log.w(TAG, "Vosk model not found, falling back to Google Speech");
+                usingVosk = false;
+                setupGoogleSpeech();
+            }
+        } catch (ClassNotFoundException cnf) {
+            Log.w(TAG, "VoskProcessor class not present; falling back to Google Speech.", cnf);
+            usingVosk = false;
+            setupGoogleSpeech();
+        } catch (Exception e) {
+            Log.e(TAG, "Vosk initialization failed, falling back to Google Speech", e);
+            usingVosk = false;
             setupGoogleSpeech();
         }
     }
@@ -88,7 +126,7 @@ public class LiveDetectionService extends Service implements SpeechProcessor.Lis
         }
     }
 
-    @Override
+    // Keep this as a plain public method so it can be used by VoskProcessor via reflection or by Google recognizer
     public void onSpeechRecognized(String text) {
         if (text == null || text.isEmpty()) return;
         
@@ -121,7 +159,8 @@ public class LiveDetectionService extends Service implements SpeechProcessor.Lis
         @Override public void onEndOfSpeech() { isListening = false; }
         @Override public void onError(int error) {
             isListening = false;
-            handler.postDelayed(() -> startListeningGoogle(), 1000);
+            // use method reference instead of lambda to satisfy analyzer
+            handler.postDelayed(this::restartListeningGoogle, 1000);
         }
         @Override
         public void onResults(android.os.Bundle results) {
@@ -134,6 +173,9 @@ public class LiveDetectionService extends Service implements SpeechProcessor.Lis
             processResults(partialResults);
         }
         @Override public void onEvent(int eventType, android.os.Bundle params) {}
+
+        // small helper to call startListeningGoogle from method reference
+        private void restartListeningGoogle() { startListeningGoogle(); }
     }
 
     private void processResults(android.os.Bundle results) {
@@ -159,11 +201,11 @@ public class LiveDetectionService extends Service implements SpeechProcessor.Lis
                 .setPriority(NotificationCompat.PRIORITY_LOW)
                 .setOngoing(true)
                 .build();
-        
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            startForeground(201, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE);
-        } else {
+
+        try {
             startForeground(201, notification);
+        } catch (SecurityException se) {
+            Log.e(TAG, "startForeground failed due to SecurityException: " + se.getMessage());
         }
     }
 
@@ -178,7 +220,14 @@ public class LiveDetectionService extends Service implements SpeechProcessor.Lis
 
     @Override
     public void onDestroy() {
-        if (voskProcessor != null) voskProcessor.stop();
+        if (voskProcessor != null && usingVosk) {
+            try {
+                Method stop = voskProcessor.getClass().getMethod("stop");
+                stop.invoke(voskProcessor);
+            } catch (Exception e) {
+                Log.w(TAG, "Failed to stop Vosk processor via reflection", e);
+            }
+        }
         if (speechRecognizer != null) {
             speechRecognizer.cancel();
             speechRecognizer.destroy();
