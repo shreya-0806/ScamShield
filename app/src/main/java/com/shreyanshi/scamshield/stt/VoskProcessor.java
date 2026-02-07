@@ -9,17 +9,16 @@ import org.vosk.Model;
 import org.vosk.Recognizer;
 import org.vosk.android.RecognitionListener;
 import org.vosk.android.SpeechService;
-import org.vosk.android.SpeechStreamService;
 import org.vosk.android.StorageService;
 
 import java.io.File;
 import java.io.IOException;
 
-public class VoskProcessor implements RecognitionListener {
+public class VoskProcessor implements SpeechProcessor, RecognitionListener {
 
     private final Context context;
     private Model model;
-    private SpeechStreamService speechStreamService;
+    private SpeechService speechService;
     private final SpeechProcessor.Listener listener;
 
     private static final String MODEL_PATH_KEY = "vosk-model";
@@ -35,8 +34,6 @@ public class VoskProcessor implements RecognitionListener {
         File sourceDir = new File(context.getFilesDir(), MODEL_PATH_KEY);
         if (!sourceDir.exists()) {
             Log.d(TAG, "Model folder not found in internal storage. Unpacking from assets...");
-            Toast.makeText(context, "Preparing offline model for first use...", Toast.LENGTH_LONG).show();
-            // Use a background thread to avoid blocking the main thread
             new Thread(() -> {
                 try {
                     StorageService.unpack(context, MODEL_PATH_KEY, MODEL_PATH_KEY,
@@ -46,8 +43,6 @@ public class VoskProcessor implements RecognitionListener {
                         },
                         (exception) -> {
                             Log.e(TAG, "Failed to unpack model from assets.", exception);
-                            // Optionally, inform the user on the main thread
-                            // new Handler(Looper.getMainLooper()).post(() -> Toast.makeText(context, "Error: Could not load detection model.", Toast.LENGTH_SHORT).show());
                         });
                 } catch (Exception e) {
                      Log.e(TAG, "Unpacking failed catastrophically.", e);
@@ -55,66 +50,82 @@ public class VoskProcessor implements RecognitionListener {
             }).start();
         } else {
             Log.d(TAG, "Model found in internal storage. Loading...");
-            this.model = new Model(sourceDir.getAbsolutePath());
+            try {
+                this.model = new Model(sourceDir.getAbsolutePath());
+            } catch (Exception e) {
+                Log.e(TAG, "Failed to load model", e);
+            }
         }
     }
 
-    public void startListening() {
+    public boolean isAvailable() {
+        return model != null || new File(context.getFilesDir(), MODEL_PATH_KEY).exists();
+    }
+
+    @Override
+    public void start() {
         if (model == null) {
-            Log.e(TAG, "Cannot start listening, model is not loaded!");
-            Toast.makeText(context, "Error: Detection model not ready.", Toast.LENGTH_SHORT).show();
-            return;
+            // Try to load it if it exists now
+            File sourceDir = new File(context.getFilesDir(), MODEL_PATH_KEY);
+            if (sourceDir.exists()) {
+                model = new Model(sourceDir.getAbsolutePath());
+            } else {
+                Log.e(TAG, "Cannot start listening, model is not loaded!");
+                return;
+            }
         }
 
         try {
-            // Correctly escaped JSON array string for grammar/keywords
             Recognizer rec = new Recognizer(model, 16000.0f, "[\"otp\", \"bank\", \"account\", \"blocked\", \"verify\", \"card\", \"password\"]");
-            speechStreamService = new SpeechStreamService(rec, 16000);
-            speechStreamService.start(this);
+            speechService = new SpeechService(rec, 16000.0f);
+            speechService.startListening(this);
             Log.d(TAG, "Vosk is now listening.");
         } catch (IOException e) {
             Log.e(TAG, "Error starting to listen.", e);
         }
     }
 
-    public void stopListening() {
-        if (speechStreamService != null) {
-            speechStreamService.stop();
-            speechStreamService = null;
+    @Override
+    public void stop() {
+        if (speechService != null) {
+            speechService.stop();
+            speechService = null;
             Log.d(TAG, "Vosk has stopped listening.");
         }
     }
 
     @Override
+    public boolean isRunning() {
+        return speechService != null;
+    }
+
+    @Override
     public void onResult(String hypothesis) {
-        try {
-            JSONObject json = new JSONObject(hypothesis);
-            String text = json.getString("text");
-            if (text != null && !text.isEmpty()) {
-                Log.i(TAG, "Hearing (Final): " + text);
-                listener.onSpeechRecognized(text);
-            }
-        } catch (Exception e) {
-            Log.e(TAG, "Could not parse final result: " + hypothesis, e);
-        }
+        processHypothesis(hypothesis, "text");
     }
 
     @Override
     public void onFinalResult(String hypothesis) {
-        // Handled by onResult
+        processHypothesis(hypothesis, "text");
     }
 
     @Override
     public void onPartialResult(String hypothesis) {
+        processHypothesis(hypothesis, "partial");
+    }
+
+    private void processHypothesis(String hypothesis, String key) {
         try {
             JSONObject json = new JSONObject(hypothesis);
-            String text = json.getString("partial");
-            if (text != null && !text.isEmpty()) {
-                Log.i(TAG, "Hearing (Partial): " + text);
-                listener.onSpeechRecognized(text);
+            String text = json.optString(key);
+            if (!text.isEmpty()) {
+                Log.i(TAG, "Hearing (" + key + "): " + text);
+                if (listener != null) {
+                    listener.onSpeechRecognized(text);
+                }
             }
         } catch (Exception e) {
-            Log.e(TAG, "Could not parse partial result: " + hypothesis, e);
+            Log.e(TAG, "Could not parse result: " + hypothesis, e);
         }
     }
 
@@ -125,7 +136,6 @@ public class VoskProcessor implements RecognitionListener {
 
     @Override
     public void onTimeout() {
-        // This is normal, just means a pause in speech.
         Log.d(TAG, "Recognition timeout.");
     }
 }

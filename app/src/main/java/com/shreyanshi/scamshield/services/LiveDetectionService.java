@@ -4,10 +4,8 @@ import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.Service;
-import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
-import android.content.IntentFilter;
 import android.content.pm.ServiceInfo;
 import android.os.Build;
 import android.os.Handler;
@@ -21,6 +19,7 @@ import android.util.Log;
 import androidx.annotation.Nullable;
 import androidx.core.app.NotificationCompat;
 
+import com.shreyanshi.scamshield.stt.SpeechProcessor;
 import com.shreyanshi.scamshield.stt.VoskProcessor;
 
 import java.util.ArrayList;
@@ -28,7 +27,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 
-public class LiveDetectionService extends Service {
+public class LiveDetectionService extends Service implements SpeechProcessor.Listener {
     private static final String TAG = "ScamShield-LiveDetect";
     public static final String ACTION_START = "com.shreyanshi.scamshield.ACTION_START_LIVE_DETECTION";
     public static final String ACTION_STOP = "com.shreyanshi.scamshield.ACTION_STOP_LIVE_DETECTION";
@@ -40,8 +39,6 @@ public class LiveDetectionService extends Service {
 
     private VoskProcessor voskProcessor = null;
     private boolean usingVosk = false;
-
-    private BroadcastReceiver voskReceiver = null;
 
     private final List<String> SCAM_KEYWORDS = Arrays.asList(
             "otp", "one time password", "pin", "password", "account blocked", "verify your account",
@@ -56,10 +53,9 @@ public class LiveDetectionService extends Service {
         startForegroundNotification();
         
         // Initialize Vosk
-        voskProcessor = new VoskProcessor(this);
+        voskProcessor = new VoskProcessor(this, this);
         if (voskProcessor.isAvailable()) {
             usingVosk = true;
-            setupVoskReceiver();
             voskProcessor.start();
             Log.i(TAG, "Vosk detection initialized");
         } else {
@@ -68,28 +64,10 @@ public class LiveDetectionService extends Service {
         }
     }
 
-    private void setupVoskReceiver() {
-        voskReceiver = new BroadcastReceiver() {
-            @Override
-            public void onReceive(Context context, Intent intent) {
-                if (intent != null && "com.shreyanshi.scamshield.VOSK_DETECTED".equals(intent.getAction())) {
-                    String keyword = intent.getStringExtra("keywords");
-                    triggerAlert(keyword);
-                }
-            }
-        };
-        IntentFilter filter = new IntentFilter("com.shreyanshi.scamshield.VOSK_DETECTED");
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(voskReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
-        } else {
-            registerReceiver(voskReceiver, filter);
-        }
-    }
-
     private void setupGoogleSpeech() {
         if (SpeechRecognizer.isRecognitionAvailable(this)) {
             speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this);
-            speechRecognizer.setRecognitionListener(new LiveRecognitionListener());
+            speechRecognizer.setRecognitionListener(new GoogleRecognitionListener());
 
             recognizerIntent = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
             recognizerIntent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
@@ -110,6 +88,19 @@ public class LiveDetectionService extends Service {
         }
     }
 
+    @Override
+    public void onSpeechRecognized(String text) {
+        if (text == null || text.isEmpty()) return;
+        
+        String lowerText = text.toLowerCase();
+        for (String k : SCAM_KEYWORDS) {
+            if (lowerText.contains(k)) {
+                triggerAlert(k);
+                break;
+            }
+        }
+    }
+
     private void triggerAlert(String detectedKeyword) {
         Log.w(TAG, "!!! SCAM KEYWORD DETECTED: " + detectedKeyword);
         Intent i = new Intent(this, ScamOverlayService.class);
@@ -122,7 +113,7 @@ public class LiveDetectionService extends Service {
         }
     }
 
-    private class LiveRecognitionListener implements RecognitionListener {
+    private class GoogleRecognitionListener implements RecognitionListener {
         @Override public void onReadyForSpeech(android.os.Bundle params) { isListening = true; }
         @Override public void onBeginningOfSpeech() {}
         @Override public void onRmsChanged(float rmsdB) {}
@@ -147,13 +138,9 @@ public class LiveDetectionService extends Service {
 
     private void processResults(android.os.Bundle results) {
         ArrayList<String> texts = results.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);
-        if (texts == null || texts.isEmpty()) return;
-        
-        String joined = String.join(" ", texts).toLowerCase();
-        for (String k : SCAM_KEYWORDS) {
-            if (joined.contains(k)) {
-                triggerAlert(k);
-                break;
+        if (texts != null) {
+            for (String text : texts) {
+                onSpeechRecognized(text);
             }
         }
     }
@@ -196,7 +183,6 @@ public class LiveDetectionService extends Service {
             speechRecognizer.cancel();
             speechRecognizer.destroy();
         }
-        if (voskReceiver != null) unregisterReceiver(voskReceiver);
         super.onDestroy();
     }
 
