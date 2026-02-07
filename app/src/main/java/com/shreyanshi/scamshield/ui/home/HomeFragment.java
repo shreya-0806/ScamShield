@@ -1,41 +1,40 @@
 package com.shreyanshi.scamshield.ui.home;
 
-import android.app.AlertDialog;
+import android.Manifest;
+import android.content.Context;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Bundle;
-import android.speech.RecognizerIntent;
+import android.provider.Settings;
 import android.text.TextUtils;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.Button;
 import android.widget.ImageButton;
 import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
-import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 import androidx.fragment.app.Fragment;
 
 import com.google.android.material.floatingactionbutton.FloatingActionButton;
 import com.shreyanshi.scamshield.R;
 import com.shreyanshi.scamshield.database.ScamDatabaseHelper;
-import com.shreyanshi.scamshield.services.SpeechToTextProcessor;
-import com.shreyanshi.scamshield.utils.ScamDetector;
+import com.shreyanshi.scamshield.services.ScamOverlayService;
 
+import java.io.File;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Locale;
 
-import static android.app.Activity.RESULT_OK;
-import android.Manifest;
-import android.content.Context;
-
 public class HomeFragment extends Fragment {
 
     private TextView tvNumber;
+    private TextView tvStatusOverlay, tvStatusVosk;
     private final StringBuilder numberBuilder = new StringBuilder();
     private ScamDatabaseHelper dbHelper;
     private View permissionWarningView;
@@ -47,11 +46,15 @@ public class HomeFragment extends Fragment {
 
         dbHelper = new ScamDatabaseHelper(getContext());
         tvNumber = view.findViewById(R.id.tvNumber);
+        tvStatusOverlay = view.findViewById(R.id.tvStatusOverlay);
+        tvStatusVosk = view.findViewById(R.id.tvStatusVosk);
+        permissionWarningView = view.findViewById(R.id.homePermissionWarning);
+        
+        Button btnTestScam = view.findViewById(R.id.btnTestScam);
         ImageButton btnBackspace = view.findViewById(R.id.btnBackspace);
         FloatingActionButton btnCall = view.findViewById(R.id.btnCall);
-        permissionWarningView = view.findViewById(R.id.homePermissionWarning);
 
-        // Set up digit buttons
+        // Dialer buttons
         setDigitClickListener(view, R.id.btn0, "0");
         setDigitClickListener(view, R.id.btn1, "1");
         setDigitClickListener(view, R.id.btn2, "2");
@@ -75,20 +78,34 @@ public class HomeFragment extends Fragment {
         btnCall.setOnClickListener(v -> {
             String number = numberBuilder.toString();
             if (!TextUtils.isEmpty(number)) {
-                saveCallAndDial(number);
+                dialNumber(number);
             } else {
                 Toast.makeText(getContext(), "Please enter a number", Toast.LENGTH_SHORT).show();
             }
         });
 
-        // Show or hide permission warning
-        updatePermissionWarning();
+        btnTestScam.setOnClickListener(v -> {
+            Intent i = new Intent(requireContext(), ScamOverlayService.class);
+            i.putExtra("action", "SHOW_ALERT");
+            i.putExtra("keywords", "TEST_SCAM_ALERT");
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                requireContext().startForegroundService(i);
+            } else {
+                requireContext().startService(i);
+            }
+            Toast.makeText(getContext(), "Showing test alert...", Toast.LENGTH_SHORT).show();
+        });
+
+        permissionWarningView.setOnClickListener(v -> {
+            requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, 100);
+        });
 
         return view;
     }
 
     private void setDigitClickListener(View parent, int id, String digit) {
-        parent.findViewById(id).setOnClickListener(v -> {
+        View v = parent.findViewById(id);
+        if (v != null) v.setOnClickListener(v1 -> {
             numberBuilder.append(digit);
             updateDisplay();
         });
@@ -98,7 +115,7 @@ public class HomeFragment extends Fragment {
         tvNumber.setText(numberBuilder.toString());
     }
 
-    private void saveCallAndDial(String number) {
+    private void dialNumber(String number) {
         String currentDateTime = new SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.getDefault()).format(new Date());
         dbHelper.insertCallLog(number, currentDateTime, false);
 
@@ -108,43 +125,30 @@ public class HomeFragment extends Fragment {
     }
 
     @Override
-    public void onActivityResult(int requestCode, int resultCode, @Nullable Intent data) {
-        super.onActivityResult(requestCode, resultCode, data);
-
-        if (requestCode == SpeechToTextProcessor.SPEECH_REQUEST_CODE && resultCode == RESULT_OK && data != null) {
-            String spokenText = SpeechToTextProcessor.getSpeechResult(data);
-            analyzeText(spokenText);
-        }
-    }
-
-    private void analyzeText(String text) {
-        ScamDetector.ScamResult result = ScamDetector.detect(text);
-
-        AlertDialog.Builder builder = new AlertDialog.Builder(getContext());
-        if (result.isScam) {
-            builder.setTitle("🚨 Scam Alert!")
-                    .setMessage("Suspicious keywords detected: " + result.matchedKeywords.toString() + 
-                                "\n\nFull Text: \"" + text + "\"")
-                    .setPositiveButton("OK", null)
-                    .setIcon(android.R.drawable.ic_dialog_alert)
-                    .show();
-            
-            // Log this as a scam record in DB
-            String date = new SimpleDateFormat("dd MMM, hh:mm a", Locale.getDefault()).format(new Date());
-            dbHelper.insertScam(date, "Keywords detected: " + result.matchedKeywords);
-        } else {
-            Toast.makeText(getContext(), "No scam keywords detected.", Toast.LENGTH_LONG).show();
-        }
-    }
-
-    @Override
     public void onResume() {
         super.onResume();
-        updatePermissionWarning();
+        updateStatusPanel();
     }
 
-    private void updatePermissionWarning() {
-        boolean micGranted = ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.RECORD_AUDIO) == android.content.pm.PackageManager.PERMISSION_GRANTED;
+    private void updateStatusPanel() {
+        Context context = requireContext();
+        
+        // Check Overlay Permission
+        boolean overlayGranted = true;
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+            overlayGranted = Settings.canDrawOverlays(context);
+        }
+        tvStatusOverlay.setText(overlayGranted ? "GRANTED" : "MISSING");
+        tvStatusOverlay.setTextColor(overlayGranted ? 0xFF4CAF50 : 0xFFF44336);
+
+        // Check Vosk Model
+        File modelFolder = new File(context.getFilesDir(), "vosk-model");
+        boolean modelExists = modelFolder.exists() && modelFolder.isDirectory();
+        tvStatusVosk.setText(modelExists ? "INSTALLED" : "MISSING");
+        tvStatusVosk.setTextColor(modelExists ? 0xFF4CAF50 : 0xFFF44336);
+
+        // Check Mic Permission
+        boolean micGranted = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED;
         permissionWarningView.setVisibility(micGranted ? View.GONE : View.VISIBLE);
     }
 }

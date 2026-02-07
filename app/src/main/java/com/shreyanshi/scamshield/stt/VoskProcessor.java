@@ -1,149 +1,130 @@
 package com.shreyanshi.scamshield.stt;
 
 import android.content.Context;
-import android.content.Intent;
 import android.util.Log;
+import android.widget.Toast;
 
-import org.json.JSONException;
 import org.json.JSONObject;
+import org.vosk.Model;
+import org.vosk.Recognizer;
+import org.vosk.android.RecognitionListener;
+import org.vosk.android.SpeechService;
+import org.vosk.android.SpeechStreamService;
+import org.vosk.android.StorageService;
 
 import java.io.File;
-import java.lang.reflect.Constructor;
-import java.lang.reflect.Method;
+import java.io.IOException;
 
-public class VoskProcessor implements SpeechProcessor {
-    private static final String TAG = "ScamShield-Vosk";
-    private boolean running = false;
+public class VoskProcessor implements RecognitionListener {
+
     private final Context context;
-    private final String modelPath;
+    private Model model;
+    private SpeechStreamService speechStreamService;
+    private final SpeechProcessor.Listener listener;
 
-    private Object modelInstance = null;
-    private Object recognizerInstance = null;
-    private Object speechServiceInstance = null;
+    private static final String MODEL_PATH_KEY = "vosk-model";
+    private static final String TAG = "ScamShield-Vosk";
 
-    private Thread pollThread = null;
-
-    public VoskProcessor(Context context) {
-        this.context = context.getApplicationContext();
-        this.modelPath = new File(this.context.getFilesDir(), "vosk-model").getAbsolutePath();
+    public VoskProcessor(Context context, SpeechProcessor.Listener listener) {
+        this.context = context;
+        this.listener = listener;
+        initModel();
     }
 
-    public boolean isAvailable() {
-        File m = new File(modelPath);
-        if (!m.exists() || !m.isDirectory()) {
-            Log.w(TAG, "Model folder missing at: " + modelPath + ". Offline detection will not work.");
-            return false;
-        }
-
-        try {
-            Class.forName("org.vosk.Model");
-            Class.forName("org.vosk.Recognizer");
-            Class.forName("org.vosk.android.SpeechService");
-            return true;
-        } catch (ClassNotFoundException e) {
-            Log.w(TAG, "Vosk library not found in project");
-            return false;
-        }
-    }
-
-    @Override
-    public void start() {
-        if (running) return;
-        if (!isAvailable()) return;
-
-        try {
-            Class<?> modelClass = Class.forName("org.vosk.Model");
-            Constructor<?> modelCtor = modelClass.getConstructor(String.class);
-            modelInstance = modelCtor.newInstance(modelPath);
-
-            Class<?> recognizerClass = Class.forName("org.vosk.Recognizer");
-            Constructor<?> recCtor = recognizerClass.getConstructor(modelClass, float.class);
-            recognizerInstance = recCtor.newInstance(modelInstance, 16000.0f);
-
-            Class<?> speechServiceClass = Class.forName("org.vosk.android.SpeechService");
-            Constructor<?> speechCtor = speechServiceClass.getConstructor(recognizerClass, float.class);
-            speechServiceInstance = speechCtor.newInstance(recognizerInstance, 16000.0f);
-
-            Method startMethod = speechServiceClass.getMethod("start");
-            startMethod.invoke(speechServiceInstance);
-
-            running = true;
-
-            pollThread = new Thread(() -> {
-                Log.d(TAG, "Vosk Poll Thread Started");
+    private void initModel() {
+        File sourceDir = new File(context.getFilesDir(), MODEL_PATH_KEY);
+        if (!sourceDir.exists()) {
+            Log.d(TAG, "Model folder not found in internal storage. Unpacking from assets...");
+            Toast.makeText(context, "Preparing offline model for first use...", Toast.LENGTH_LONG).show();
+            // Use a background thread to avoid blocking the main thread
+            new Thread(() -> {
                 try {
-                    Method getPartial = recognizerInstance.getClass().getMethod("getPartialResult");
-                    Method getResult = recognizerInstance.getClass().getMethod("getResult");
-
-                    while (running) {
-                        String json = (String) getPartial.invoke(recognizerInstance);
-                        // Check partial results for instant detection
-                        if (json != null && !json.isEmpty() && !json.contains("\"partial\" : \"\"")) {
-                            String text = extractTextFromVoskJson(json);
-                            if (text != null && !text.isEmpty()) {
-                                Log.v(TAG, "Hearing (Partial): " + text);
-                                checkKeywords(text);
-                            }
-                        }
-                        
-                        // Small sleep to prevent CPU hammering
-                        Thread.sleep(300);
-                    }
+                    StorageService.unpack(context, MODEL_PATH_KEY, MODEL_PATH_KEY,
+                        (model) -> {
+                            this.model = model;
+                            Log.d(TAG, "Model unpacked successfully.");
+                        },
+                        (exception) -> {
+                            Log.e(TAG, "Failed to unpack model from assets.", exception);
+                            // Optionally, inform the user on the main thread
+                            // new Handler(Looper.getMainLooper()).post(() -> Toast.makeText(context, "Error: Could not load detection model.", Toast.LENGTH_SHORT).show());
+                        });
                 } catch (Exception e) {
-                    Log.e(TAG, "Poll Thread Error: " + e.getMessage());
+                     Log.e(TAG, "Unpacking failed catastrophically.", e);
                 }
-            });
-            pollThread.start();
+            }).start();
+        } else {
+            Log.d(TAG, "Model found in internal storage. Loading...");
+            this.model = new Model(sourceDir.getAbsolutePath());
+        }
+    }
 
-            Log.i(TAG, "Vosk Started Successfully");
+    public void startListening() {
+        if (model == null) {
+            Log.e(TAG, "Cannot start listening, model is not loaded!");
+            Toast.makeText(context, "Error: Detection model not ready.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        try {
+            Recognizer rec = new Recognizer(model, 16000.0f, "["otp", "bank", "account", "blocked", "verify", "card", "password"]");
+            speechStreamService = new SpeechStreamService(rec, 16000);
+            speechStreamService.start(this);
+            Log.d(TAG, "Vosk is now listening.");
+        } catch (IOException e) {
+            Log.e(TAG, "Error starting to listen.", e);
+        }
+    }
+
+    public void stopListening() {
+        if (speechStreamService != null) {
+            speechStreamService.stop();
+            speechStreamService = null;
+            Log.d(TAG, "Vosk has stopped listening.");
+        }
+    }
+
+    @Override
+    public void onResult(String hypothesis) {
+        try {
+            JSONObject json = new JSONObject(hypothesis);
+            String text = json.getString("text");
+            if (text != null && !text.isEmpty()) {
+                Log.i(TAG, "Hearing (Final): " + text);
+                listener.onSpeechRecognized(text);
+            }
         } catch (Exception e) {
-            Log.e(TAG, "Start Failed: " + e.getMessage());
-            running = false;
+            Log.e(TAG, "Could not parse final result: " + hypothesis, e);
         }
     }
 
-    private void checkKeywords(String text) {
-        String lower = text.toLowerCase();
-        // Expanded keyword list for better detection
-        String[] keywords = {
-            "otp", "password", "pin", "bank", "transfer", "money", 
-            "verify", "card", "upi", "paytm", "blocked", "account", "locked"
-        };
-        
-        for (String k : keywords) {
-            if (lower.contains(k)) {
-                Log.w(TAG, "!!! SCAM KEYWORD DETECTED: " + k + " in text: " + text);
-                Intent i = new Intent("com.shreyanshi.scamshield.VOSK_DETECTED");
-                i.putExtra("keywords", k);
-                i.putExtra("text", text);
-                context.sendBroadcast(i);
-                // Don't break here if we want to log everything, but one broadcast is enough
-                break; 
+    @Override
+    public void onFinalResult(String hypothesis) {
+        // Handled by onResult
+    }
+
+    @Override
+    public void onPartialResult(String hypothesis) {
+        try {
+            JSONObject json = new JSONObject(hypothesis);
+            String text = json.getString("partial");
+            if (text != null && !text.isEmpty()) {
+                Log.i(TAG, "Hearing (Partial): " + text);
+                listener.onSpeechRecognized(text);
             }
+        } catch (Exception e) {
+            Log.e(TAG, "Could not parse partial result: " + hypothesis, e);
         }
     }
 
-    private String extractTextFromVoskJson(String json) {
-        try {
-            JSONObject obj = new JSONObject(json);
-            if (obj.has("partial")) return obj.getString("partial").trim();
-            if (obj.has("text")) return obj.getString("text").trim();
-        } catch (JSONException ignored) {}
-        return null;
+    @Override
+    public void onError(Exception e) {
+        Log.e(TAG, "Recognition error", e);
     }
 
     @Override
-    public void stop() {
-        running = false;
-        if (pollThread != null) pollThread.interrupt();
-        try {
-            if (speechServiceInstance != null) {
-                speechServiceInstance.getClass().getMethod("stop").invoke(speechServiceInstance);
-            }
-        } catch (Exception ignored) {}
-        Log.i(TAG, "Vosk Stopped");
+    public void onTimeout() {
+        // This is normal, just means a pause in speech.
+        Log.d(TAG, "Recognition timeout.");
     }
-
-    @Override
-    public boolean isRunning() { return running; }
 }

@@ -1,8 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:tools="http://schemas.android.com/tools">
-
-    <uses-feature android:name="android.hardware.telephony" android:required="false" />
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.READ_CONTACTS" />
     <uses-permission android:name="android.permission.CALL_PHONE" />
@@ -15,19 +12,11 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.READ_CALL_LOG" />
 
-    <queries>
-        <intent>
-            <action android:name="android.intent.action.RECOGNIZE_SPEECH" />
-        </intent>
-    </queries>
-
     <application
         android:name="com.shreyanshi.scamshield.ScamApplication"
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
         android:label="ScamShield"
-        android:roundIcon="@mipmap/ic_launcher_round"
-        android:supportsRtl="true"
         android:theme="@style/Theme.ScamShield">
 
         <activity
@@ -37,36 +26,16 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-            
-            <intent-filter>
-                <action android:name="android.intent.action.DIAL" />
-                <category android:name="android.intent.category.DEFAULT" />
-            </intent-filter>
-            <intent-filter>
-                <action android:name="android.intent.action.DIAL" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <data android:scheme="tel" />
-            </intent-filter>
         </activity>
 
-        <activity android:name="com.shreyanshi.scamshield.activities.ScamNewsActivity" android:exported="false" />
-        <activity android:name="com.shreyanshi.scamshield.activities.SettingsActivity" android:exported="false" />
-        <activity android:name="com.shreyanshi.scamshield.activities.ScamHistoryActivity" android:exported="false" />
-        <activity android:name="com.shreyanshi.scamshield.activities.PostCallActivity" android:exported="false" android:theme="@style/Theme.AppCompat.Light.Dialog" />
-        <activity android:name="com.shreyanshi.scamshield.activities.ScamAlertActivity" android:exported="false" />
-
-        <service android:name="com.shreyanshi.scamshield.services.ScamOverlayService"
+        <service 
+            android:name="com.shreyanshi.scamshield.services.LiveDetectionService"
             android:enabled="true"
             android:exported="false"
-            android:foregroundServiceType="specialUse">
+            android:foregroundServiceType="microphone|specialUse">
             <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="Displaying real-time scam alerts during phone calls" />
+                android:value="Real-time scam detection and alerting during calls" />
         </service>
-
-        <service android:name="com.shreyanshi.scamshield.services.LiveDetectionService"
-            android:enabled="true"
-            android:exported="false"
-            android:foregroundServiceType="microphone" />
 
         <receiver android:name="com.shreyanshi.scamshield.services.CallReceiver" android:exported="true">
             <intent-filter>

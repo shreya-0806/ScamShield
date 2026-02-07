@@ -1,0 +1,8 @@
+# Handle line endings automatically for text files
+* text=auto
+
+# Explicitly declare binary files to prevent Git from touching them
+# This is crucial for the Vosk model files
+*.stats binary
+*.int binary
+*.bin binary
