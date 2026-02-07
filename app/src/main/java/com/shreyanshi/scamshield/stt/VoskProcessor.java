@@ -67,7 +67,8 @@ public class VoskProcessor implements RecognitionListener {
         }
 
         try {
-            Recognizer rec = new Recognizer(model, 16000.0f, "["otp", "bank", "account", "blocked", "verify", "card", "password"]");
+            // Correctly escaped JSON array string for grammar/keywords
+            Recognizer rec = new Recognizer(model, 16000.0f, "[\"otp\", \"bank\", \"account\", \"blocked\", \"verify\", \"card\", \"password\"]");
             speechStreamService = new SpeechStreamService(rec, 16000);
             speechStreamService.start(this);
             Log.d(TAG, "Vosk is now listening.");
