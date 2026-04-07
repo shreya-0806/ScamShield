@@ -43,6 +43,9 @@ dependencies {
     implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
     implementation 'androidx.recyclerview:recyclerview:1.3.2'
 
+    // Browser for CustomTabs
+    implementation 'androidx.browser:browser:1.5.0'
+
     // Vosk Offline STT
     implementation 'com.alphacephei:vosk-android:0.3.47'
 
