@@ -1,19 +1,15 @@
 package com.shreyanshi.scamshield.activities;
 
-import android.app.AlertDialog;
-import android.app.role.RoleManager;
-import android.content.Intent;
-import android.os.Bundle;
 import android.Manifest;
-import android.content.pm.PackageManager;
 import android.content.Context;
+import android.content.Intent;
 import android.content.SharedPreferences;
-import android.net.Uri;
-import android.provider.Settings;
-import android.telecom.TelecomManager;
+import android.content.pm.PackageManager;
+import android.os.Bundle;
 import android.util.Log;
 
 import androidx.annotation.NonNull;
+import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
@@ -28,25 +24,15 @@ import java.nio.charset.StandardCharsets;
 
 public class MainActivity extends AppCompatActivity {
 
-    private static final int REQUEST_START_PERMISSIONS = 200;
-    private static final int REQUEST_ID_DEFAULT_DIALER = 201;
-    private static final int REQUEST_OVERLAY_PERMISSION = 202;
+    private static final int REQUEST_PERMISSIONS = 200;
+    private static final String PREF_NAME = "ScamShieldPrefs";
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        // Check crash logs
         checkCrashLogs();
-
-        // Check permissions
-        SharedPreferences prefs = getSharedPreferences("ScamShieldPrefs", Context.MODE_PRIVATE);
-        boolean scamAlerts = prefs.getBoolean("scam_alerts_enabled", true);
-        if (scamAlerts) {
-            ensureStartPermissions();
-            requestDefaultDialerRole();
-            checkOverlayPermission();
-        }
+        checkAndRequestPermissions();
 
         setContentView(R.layout.activity_main);
 
@@ -57,70 +43,16 @@ public class MainActivity extends AppCompatActivity {
         bottomNavigation.setOnItemSelectedListener(item -> loadFragmentById(item.getItemId()));
     }
 
-    private void checkOverlayPermission() {
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
-            if (!Settings.canDrawOverlays(this)) {
-                new AlertDialog.Builder(this)
-                        .setTitle("Overlay Permission Required")
-                        .setMessage("ScamShield needs permission to display alerts over other apps during calls. Please enable 'Display over other apps'.")
-                        .setPositiveButton("Settings", (dialog, which) -> {
-                            Intent intent = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                                    Uri.parse("package:" + getPackageName()));
-                            startActivityForResult(intent, REQUEST_OVERLAY_PERMISSION);
-                        })
-                        .setNegativeButton("Later", null)
-                        .show();
-            }
-        }
-    }
-
-    private void requestDefaultDialerRole() {
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
-            RoleManager roleManager = (RoleManager) getSystemService(Context.ROLE_SERVICE);
-            if (roleManager != null && !roleManager.isRoleHeld(RoleManager.ROLE_DIALER)) {
-                Intent intent = roleManager.createRequestRoleIntent(RoleManager.ROLE_DIALER);
-                startActivityForResult(intent, REQUEST_ID_DEFAULT_DIALER);
-            }
-        } else {
-            TelecomManager telecomManager = (TelecomManager) getSystemService(Context.TELECOM_SERVICE);
-            if (telecomManager != null && !getPackageName().equals(telecomManager.getDefaultDialerPackage())) {
-                Intent intent = new Intent(TelecomManager.ACTION_CHANGE_DEFAULT_DIALER)
-                        .putExtra(TelecomManager.EXTRA_CHANGE_DEFAULT_DIALER_PACKAGE_NAME, getPackageName());
-                startActivity(intent);
-            }
-        }
-    }
-
-    private void checkCrashLogs() {
-        try {
-            File dir = getExternalFilesDir("logs");
-            if (dir != null) {
-                File f = new File(dir, "last_crash.txt");
-                if (f.exists() && f.length() > 0) {
-                    try (FileInputStream fis = new FileInputStream(f)) {
-                        byte[] data = new byte[(int) f.length()];
-                        fis.read(data);
-                        String s = new String(data, StandardCharsets.UTF_8);
-                        new AlertDialog.Builder(this)
-                                .setTitle("App Recovery Info")
-                                .setMessage("The app restarted after a background issue. To prevent this, please ensure 'Battery Optimization' is off for ScamShield.\n\nDetails:\n" + s)
-                                .setPositiveButton("OK", (d, w) -> f.delete())
-                                .show();
-                    }
-                }
-            }
-        } catch (Exception ignored) {}
-    }
-
-    private void ensureStartPermissions() {
+    private void checkAndRequestPermissions() {
         String[] perms = {
-            Manifest.permission.RECORD_AUDIO,
-            Manifest.permission.READ_PHONE_STATE,
-            Manifest.permission.CALL_PHONE,
-            Manifest.permission.READ_CALL_LOG,
-            Manifest.permission.READ_CONTACTS
+                Manifest.permission.RECORD_AUDIO,
+                Manifest.permission.READ_PHONE_STATE,
+                Manifest.permission.CALL_PHONE,
+                Manifest.permission.READ_CALL_LOG,
+                Manifest.permission.READ_CONTACTS,
+                Manifest.permission.POST_NOTIFICATIONS
         };
-        
+
         boolean needsRequest = false;
         for (String p : perms) {
             if (ContextCompat.checkSelfPermission(this, p) != PackageManager.PERMISSION_GRANTED) {
@@ -130,7 +62,7 @@ public class MainActivity extends AppCompatActivity {
         }
 
         if (needsRequest) {
-            ActivityCompat.requestPermissions(this, perms, REQUEST_START_PERMISSIONS);
+            ActivityCompat.requestPermissions(this, perms, REQUEST_PERMISSIONS);
         }
     }
 
@@ -153,19 +85,46 @@ public class MainActivity extends AppCompatActivity {
         try {
             Fragment f = getSupportFragmentManager().getFragmentFactory().instantiate(getClassLoader(), fqcn);
             getSupportFragmentManager().beginTransaction().replace(R.id.fragment_container, f).commit();
+        } catch (Exception e) {
+            Log.e("MainActivity", "Error loading fragment: " + fqcn, e);
+        }
+    }
+
+    private void checkCrashLogs() {
+        try {
+            File dir = getExternalFilesDir("logs");
+            if (dir != null) {
+                File f = new File(dir, "last_crash.txt");
+                if (f.exists() && f.length() > 0) {
+                    try (FileInputStream fis = new FileInputStream(f)) {
+                        byte[] data = new byte[(int) f.length()];
+                        fis.read(data);
+                        String s = new String(data, StandardCharsets.UTF_8);
+                        new AlertDialog.Builder(this)
+                                .setTitle("App Recovery Info")
+                                .setMessage("The app restarted after a background issue. Details:\n" + s)
+                                .setPositiveButton("OK", (d, w) -> f.delete())
+                                .show();
+                    }
+                }
+            }
         } catch (Exception ignored) {}
     }
 
     @Override
     public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-        if (requestCode == REQUEST_START_PERMISSIONS) {
-            // Check if fragment is HomeFragment and refresh it
-            Fragment f = getSupportFragmentManager().findFragmentById(R.id.fragment_container);
-            if (f != null && f.getClass().getName().contains("HomeFragment")) {
-                loadFragmentByName(f.getClass().getName());
-            } else if (f != null && f.getClass().getName().contains("ContactsFragment")) {
-                 loadFragmentByName(f.getClass().getName());
+        if (requestCode == REQUEST_PERMISSIONS) {
+            SharedPreferences prefs = getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
+            boolean allGranted = true;
+            for (int result : grantResults) {
+                if (result != PackageManager.PERMISSION_GRANTED) {
+                    allGranted = false;
+                    break;
+                }
+            }
+            if (!allGranted) {
+                prefs.edit().putBoolean("scam_alerts_enabled", false).apply();
             }
         }
     }

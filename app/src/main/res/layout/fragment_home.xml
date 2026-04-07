@@ -6,7 +6,6 @@
     android:background="#121212"
     android:padding="16dp">
 
-    <!-- Status Section -->
     <LinearLayout
         android:id="@+id/statusPanel"
         android:layout_width="match_parent"
@@ -33,10 +32,10 @@
                 android:layout_width="0dp"
                 android:layout_weight="1"
                 android:layout_height="wrap_content"
-                android:text="Overlay Permission:"
+                android:text="Scam Protection:"
                 android:textColor="@android:color/white" />
             <TextView
-                android:id="@+id/tvStatusOverlay"
+                android:id="@+id/tvStatusProtection"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="CHECKING..."
@@ -52,7 +51,7 @@
                 android:layout_width="0dp"
                 android:layout_weight="1"
                 android:layout_height="wrap_content"
-                android:text="Vosk Model (Offline):"
+                android:text="Offline Vosk Model:"
                 android:textColor="@android:color/white" />
             <TextView
                 android:id="@+id/tvStatusVosk"
@@ -67,12 +66,11 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="12dp"
-            android:text="Test Alert Pop-up"
+            android:text="Test Scam Alert"
             android:backgroundTint="#D32F2F" />
 
     </LinearLayout>
 
-    <!-- Permission warning banner -->
     <TextView
         android:id="@+id/homePermissionWarning"
         android:layout_width="match_parent"
@@ -81,10 +79,9 @@
         android:background="#FFF3F3"
         android:textColor="#B00020"
         android:padding="10dp"
-        android:text="Microphone permission is required for scam detection. Click to grant."
+        android:text="Microphone permission required for scam detection. Tap to grant."
         android:visibility="gone" />
 
-    <!-- Number Display Area -->
     <LinearLayout
         android:id="@+id/displayArea"
         android:layout_width="match_parent"
@@ -98,7 +95,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:gravity="center"
-            android:hint="Dial a number"
+            android:hint="Enter number"
             android:textColorHint="#555555"
             android:textColor="@android:color/white"
             android:textSize="36sp"
@@ -107,7 +104,6 @@
             android:padding="8dp"/>
     </LinearLayout>
 
-    <!-- Dialer Grid -->
     <GridLayout
         android:id="@+id/dialerGrid"
         android:layout_width="match_parent"
@@ -134,7 +130,6 @@
         <Button style="@style/DialButton" android:text="#" android:id="@+id/btnHash"/>
     </GridLayout>
 
-    <!-- Call and Backspace Area -->
     <LinearLayout
         android:id="@+id/actionArea"
         android:layout_width="match_parent"

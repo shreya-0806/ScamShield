@@ -5,10 +5,8 @@ import android.net.Uri;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
-import android.widget.Button;
-import android.widget.ImageButton;
+import android.widget.ImageView;
 import android.widget.TextView;
-import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.recyclerview.widget.RecyclerView;
@@ -37,29 +35,39 @@ public class HistoryAdapter extends RecyclerView.Adapter<HistoryAdapter.ViewHold
     public void onBindViewHolder(@NonNull ViewHolder holder, int position) {
         CallLogModel model = callLogs.get(position);
 
-        holder.tvPhone.setText(model.getPhoneNumber());
+        holder.tvName.setText(model.getName());
+        holder.tvNumber.setText(model.getNumber());
         holder.tvDate.setText(model.getDateTime());
 
+        int iconRes;
+        int iconTint;
+        switch (model.getCallType()) {
+            case CallLogModel.TYPE_OUTGOING:
+                iconRes = android.R.drawable.sym_call_outgoing;
+                iconTint = 0xFF4CAF50;
+                break;
+            case CallLogModel.TYPE_INCOMING:
+                iconRes = android.R.drawable.sym_call_incoming;
+                iconTint = 0xFF4CAF50;
+                break;
+            default:
+                iconRes = android.R.drawable.sym_call_missed;
+                iconTint = 0xFFF44336;
+                break;
+        }
+        
+        holder.ivCallType.setImageResource(iconRes);
+        holder.ivCallType.setColorFilter(iconTint);
+
         if (model.isScam()) {
-            holder.tvStatus.setText("⚠ Scam Detected");
-            holder.tvStatus.setTextColor(0xFFD32F2F);
+            holder.tvScamIndicator.setVisibility(View.VISIBLE);
         } else {
-            holder.tvStatus.setText("Normal Call");
-            holder.tvStatus.setTextColor(0xFF388E3C);
+            holder.tvScamIndicator.setVisibility(View.GONE);
         }
 
-        holder.btnBlock.setText(model.isBlocked() ? "Unblock" : "Block");
-
-        holder.btnBlock.setOnClickListener(v -> {
-            model.toggleBlocked();
-            notifyItemChanged(position);
-            String msg = model.isBlocked() ? "Number Blocked" : "Number Unblocked";
-            Toast.makeText(v.getContext(), msg, Toast.LENGTH_SHORT).show();
-        });
-
-        holder.btnCall.setOnClickListener(v -> {
+        holder.itemView.setOnClickListener(v -> {
             Intent intent = new Intent(Intent.ACTION_DIAL);
-            intent.setData(Uri.parse("tel:" + model.getPhoneNumber()));
+            intent.setData(Uri.parse("tel:" + model.getNumber()));
             v.getContext().startActivity(intent);
         });
     }
@@ -70,18 +78,16 @@ public class HistoryAdapter extends RecyclerView.Adapter<HistoryAdapter.ViewHold
     }
 
     static class ViewHolder extends RecyclerView.ViewHolder {
-
-        TextView tvPhone, tvDate, tvStatus;
-        Button btnBlock;
-        ImageButton btnCall;
+        TextView tvName, tvNumber, tvDate, tvScamIndicator;
+        ImageView ivCallType;
 
         public ViewHolder(@NonNull View itemView) {
             super(itemView);
-            tvPhone = itemView.findViewById(R.id.tvPhone);
-            tvDate = itemView.findViewById(R.id.tvDate);
-            tvStatus = itemView.findViewById(R.id.tvStatus);
-            btnBlock = itemView.findViewById(R.id.btnBlock);
-            btnCall = itemView.findViewById(R.id.btnCallHistory);
+            tvName = itemView.findViewById(R.id.tvCallName);
+            tvNumber = itemView.findViewById(R.id.tvCallNumber);
+            tvDate = itemView.findViewById(R.id.tvCallDate);
+            tvScamIndicator = itemView.findViewById(R.id.tvScamIndicator);
+            ivCallType = itemView.findViewById(R.id.ivCallType);
         }
     }
 }

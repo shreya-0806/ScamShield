@@ -1,88 +1,173 @@
 package com.shreyanshi.scamshield.activities;
 
+import android.app.KeyguardManager;
 import android.content.Context;
 import android.content.Intent;
-import android.media.MediaPlayer;
+import android.media.Ringtone;
+import android.media.RingtoneManager;
+import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
-import android.util.Log;
+import android.os.PowerManager;
+import android.os.VibrationEffect;
+import android.os.Vibrator;
+import android.view.Window;
+import android.view.WindowManager;
 import android.widget.Button;
 import android.widget.TextView;
 
-import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
 
-import java.io.IOException;
-import java.util.ArrayList;
+import com.shreyanshi.scamshield.R;
 
 public class ScamAlertActivity extends AppCompatActivity {
 
-    private static final String EXTRA_AUDIO = "extra_audio";
-    private static final String EXTRA_TRANSCRIPT = "extra_transcript";
-    private static final String EXTRA_MATCHES = "extra_matches";
+    public static final String EXTRA_KEYWORDS = "keywords";
+    public static final String EXTRA_NUMBER = "number";
 
-    public static Intent createIntent(Context ctx, String audioPath, String transcript, ArrayList<String> matches) {
+    private Ringtone ringtone;
+
+    public static Intent createIntent(Context ctx, String keywords, String number) {
         Intent i = new Intent(ctx, ScamAlertActivity.class);
-        i.putExtra(EXTRA_AUDIO, audioPath);
-        i.putExtra(EXTRA_TRANSCRIPT, transcript);
-        i.putStringArrayListExtra(EXTRA_MATCHES, matches);
+        i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        i.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP);
+        i.addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP);
+        i.putExtra(EXTRA_KEYWORDS, keywords);
+        i.putExtra(EXTRA_NUMBER, number);
         return i;
     }
 
-    private MediaPlayer player;
-    private String audioPath;
-
     @Override
-    protected void onCreate(@Nullable Bundle savedInstanceState) {
+    protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        int layoutId = getResources().getIdentifier("activity_scam_alert", "layout", getPackageName());
-        if (layoutId != 0) setContentView(layoutId);
+        
+        setupWindowFlags();
 
-        int titleId = getResources().getIdentifier("alertTitle", "id", getPackageName());
-        int transcriptId = getResources().getIdentifier("alertTranscript", "id", getPackageName());
-        int matchesId = getResources().getIdentifier("alertMatches", "id", getPackageName());
-        int playBtnId = getResources().getIdentifier("alertPlayBtn", "id", getPackageName());
-        int dismissBtnId = getResources().getIdentifier("alertDismissBtn", "id", getPackageName());
+        setContentView(R.layout.activity_scam_alert);
 
-        TextView title = titleId != 0 ? findViewById(titleId) : null;
-        TextView transcriptView = transcriptId != 0 ? findViewById(transcriptId) : null;
-        TextView matchesView = matchesId != 0 ? findViewById(matchesId) : null;
-        Button playBtn = playBtnId != 0 ? findViewById(playBtnId) : null;
-        Button dismissBtn = dismissBtnId != 0 ? findViewById(dismissBtnId) : null;
+        String keywords = getIntent().getStringExtra(EXTRA_KEYWORDS);
+        String number = getIntent().getStringExtra(EXTRA_NUMBER);
 
-        audioPath = getIntent().getStringExtra(EXTRA_AUDIO);
-        String transcript = getIntent().getStringExtra(EXTRA_TRANSCRIPT);
-        ArrayList<String> matches = getIntent().getStringArrayListExtra(EXTRA_MATCHES);
+        TextView tvKeywords = findViewById(R.id.tvAlertKeywords);
+        TextView tvNumber = findViewById(R.id.tvAlertNumber);
+        TextView tvAdvice = findViewById(R.id.tvAlertAdvice);
+        Button btnDismiss = findViewById(R.id.btnDismissAlert);
+        Button btnEndCall = findViewById(R.id.btnEndCall);
 
-        if (title != null) title.setText("Potential scam detected");
-        if (transcriptView != null) transcriptView.setText(transcript != null ? transcript : "(no transcript)");
-        if (matchesView != null) matchesView.setText(matches != null ? matches.toString() : "[]");
+        if (tvKeywords != null) {
+            tvKeywords.setText("Scam Alert: " + (keywords != null ? keywords : "Suspicious Activity Detected"));
+        }
+        if (tvNumber != null && number != null && !number.isEmpty()) {
+            tvNumber.setText("From: " + number);
+            tvNumber.setVisibility(TextView.VISIBLE);
+        } else if (tvNumber != null) {
+            tvNumber.setVisibility(TextView.GONE);
+        }
 
-        if (playBtn != null) playBtn.setOnClickListener(v -> playRecording());
-        if (dismissBtn != null) dismissBtn.setOnClickListener(v -> finish());
+        playAlertSound();
+        vibrateDevice();
+
+        if (btnDismiss != null) {
+            btnDismiss.setOnClickListener(v -> dismissAlert());
+        }
+
+        if (btnEndCall != null) {
+            btnEndCall.setOnClickListener(v -> {
+                endCall();
+                dismissAlert();
+            });
+        }
     }
 
-    private void playRecording() {
-        if (audioPath == null) return;
-        try {
-            if (player == null) player = new MediaPlayer();
-            else player.reset();
-            player.setDataSource(audioPath);
-            player.prepare();
-            player.start();
-        } catch (IOException e) {
-            Log.e("ScamAlert", "Play error", e);
+    private void setupWindowFlags() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+            setShowWhenLocked(true);
+            setTurnScreenOn(true);
+            KeyguardManager keyguardManager = (KeyguardManager) getSystemService(Context.KEYGUARD_SERVICE);
+            if (keyguardManager != null) {
+                keyguardManager.requestDismissKeyguard(this, null);
+            }
+        } else {
+            Window window = getWindow();
+            window.addFlags(WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD);
+            window.addFlags(WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED);
+            window.addFlags(WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON);
         }
+
+        Window window = getWindow();
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        window.addFlags(WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN);
+        window.addFlags(WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS);
+        
+        final WindowManager.LayoutParams params = window.getAttributes();
+        params.dimAmount = 0.8f;
+        window.setAttributes(params);
+        window.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
+    }
+
+    private void playAlertSound() {
+        try {
+            Uri alarmUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION);
+            if (alarmUri == null) {
+                alarmUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE);
+            }
+            if (alarmUri != null) {
+                ringtone = RingtoneManager.getRingtone(this, alarmUri);
+                if (ringtone != null) {
+                    ringtone.play();
+                }
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    private void vibrateDevice() {
+        try {
+            Vibrator vibrator = (Vibrator) getSystemService(Context.VIBRATOR_SERVICE);
+            if (vibrator != null && vibrator.hasVibrator()) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    vibrator.vibrate(VibrationEffect.createWaveform(new long[]{0, 500, 200, 500, 200, 500}, -1));
+                } else {
+                    vibrator.vibrate(new long[]{0, 500, 200, 500, 200, 500}, -1);
+                }
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    private void endCall() {
+        try {
+            TelecomManager telecomManager = (TelecomManager) getSystemService(Context.TELECOM_SERVICE);
+            if (telecomManager != null) {
+                telecomManager.endCall();
+                return;
+            }
+        } catch (Exception e) {
+            try {
+                Runtime.getRuntime().exec("input keyevent " + android.view.KeyEvent.KEYCODE_ENDCALL);
+            } catch (Exception ignored) {}
+        }
+    }
+
+    private void dismissAlert() {
+        if (ringtone != null && ringtone.isPlaying()) {
+            ringtone.stop();
+        }
+        try {
+            Vibrator vibrator = (Vibrator) getSystemService(Context.VIBRATOR_SERVICE);
+            if (vibrator != null) {
+                vibrator.cancel();
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        finish();
     }
 
     @Override
-    protected void onDestroy() {
-        super.onDestroy();
-        if (player != null) {
-            try {
-                player.stop();
-            } catch (Exception ignored) {}
-            player.release();
-            player = null;
-        }
+    public void onBackPressed() {
+        dismissAlert();
     }
 }

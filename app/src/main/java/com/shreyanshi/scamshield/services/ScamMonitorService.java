@@ -4,11 +4,11 @@ import android.annotation.SuppressLint;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
+import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
-import android.content.pm.ServiceInfo;
-import android.graphics.PixelFormat;
+import android.content.SharedPreferences;
 import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
@@ -17,21 +17,18 @@ import android.speech.RecognitionListener;
 import android.speech.RecognizerIntent;
 import android.speech.SpeechRecognizer;
 import android.util.Log;
-import android.view.Gravity;
-import android.view.LayoutInflater;
-import android.view.View;
-import android.view.WindowManager;
-import android.widget.TextView;
+import android.widget.Toast;
 
 import androidx.annotation.Nullable;
 import androidx.core.app.NotificationCompat;
 import androidx.core.content.ContextCompat;
 
 import com.shreyanshi.scamshield.R;
+import com.shreyanshi.scamshield.activities.MainActivity;
+import com.shreyanshi.scamshield.activities.ScamAlertActivity;
 import com.shreyanshi.scamshield.stt.SpeechListener;
 import com.shreyanshi.scamshield.stt.VoskProcessor;
 
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -56,19 +53,17 @@ public class ScamMonitorService extends Service implements SpeechListener {
     private boolean isServiceRunning = false;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private long lastAlertTime = 0;
+    private String currentNumber = "";
 
     private VoskProcessor voskProcessor = null;
     private boolean usingVosk = false;
-
-    private WindowManager windowManager;
-    private View overlayView;
-    private boolean isOverlayShowing = false;
 
     private final List<String> SCAM_KEYWORDS = Arrays.asList(
             "otp", "one time password", "pin", "password", "account blocked", "verify your account",
             "bank", "transfer", "money", "verify", "card number", "upi", "paytm", "netbanking",
             "reset password", "remote access", "confirm code", "lottery", "gift card", "customer care",
-            "blocked", "locked", "account"
+            "blocked", "locked", "account", "aadhar", "PAN card", "KYC", "debit card", "credit card",
+            "UPI id", "bank account", "suspended", "immediate action", "urgent"
     );
 
     @Override
@@ -87,6 +82,10 @@ public class ScamMonitorService extends Service implements SpeechListener {
             return START_NOT_STICKY;
         }
 
+        if (intent != null) {
+            currentNumber = intent.getStringExtra("number");
+        }
+
         if (!isServiceRunning) {
             isServiceRunning = true;
             startForegroundWithNotification();
@@ -99,6 +98,11 @@ public class ScamMonitorService extends Service implements SpeechListener {
     private void startForegroundWithNotification() {
         createNotificationChannel();
 
+        Intent notificationIntent = new Intent(this, MainActivity.class);
+        PendingIntent pendingIntent = PendingIntent.getActivity(
+                this, 0, notificationIntent,
+                PendingIntent.FLAG_IMMUTABLE);
+
         Notification notification = new NotificationCompat.Builder(this, CHANNEL_ID)
                 .setContentTitle("ScamShield Active")
                 .setContentText("Monitoring calls for scam attempts")
@@ -106,6 +110,7 @@ public class ScamMonitorService extends Service implements SpeechListener {
                 .setPriority(NotificationCompat.PRIORITY_LOW)
                 .setOngoing(true)
                 .setCategory(NotificationCompat.CATEGORY_SERVICE)
+                .setContentIntent(pendingIntent)
                 .build();
 
         try {
@@ -214,70 +219,16 @@ public class ScamMonitorService extends Service implements SpeechListener {
         lastAlertTime = now;
         
         Log.w(TAG, "!!! SCAM KEYWORD DETECTED: " + detectedKeyword);
-        showScamOverlay(detectedKeyword);
+        showScamAlert(detectedKeyword);
     }
 
-    @SuppressLint("InflateParams")
-    private void showScamOverlay(String keywords) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !android.provider.Settings.canDrawOverlays(this)) {
-            Log.w(TAG, "Overlay permission not granted");
-            return;
-        }
-
+    private void showScamAlert(String keywords) {
         try {
-            if (isOverlayShowing && overlayView != null) {
-                TextView tv = overlayView.findViewById(R.id.tvOverlayKeywords);
-                if (tv != null) tv.setText("Scam Detected: " + keywords);
-                return;
-            }
-
-            windowManager = (WindowManager) getSystemService(Context.WINDOW_SERVICE);
-            overlayView = LayoutInflater.from(this).inflate(R.layout.layout_scam_alert_overlay, null);
-
-            TextView tvKeywords = overlayView.findViewById(R.id.tvOverlayKeywords);
-            if (tvKeywords != null) tvKeywords.setText("Scam Detected: " + keywords);
-
-            int layoutType;
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                layoutType = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY;
-            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                layoutType = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY;
-            } else {
-                layoutType = WindowManager.LayoutParams.TYPE_PHONE;
-            }
-
-            WindowManager.LayoutParams params = new WindowManager.LayoutParams(
-                    WindowManager.LayoutParams.MATCH_PARENT,
-                    WindowManager.LayoutParams.WRAP_CONTENT,
-                    layoutType,
-                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | 
-                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
-                    PixelFormat.TRANSLUCENT);
-
-            params.gravity = Gravity.TOP;
-            
-            if (windowManager != null) {
-                windowManager.addView(overlayView, params);
-                isOverlayShowing = true;
-                
-                View dismiss = overlayView.findViewById(R.id.btnDismissOverlay);
-                if (dismiss != null) {
-                    dismiss.setOnClickListener(v -> hideScamOverlay());
-                }
-            }
+            Intent alertIntent = ScamAlertActivity.createIntent(this, keywords, currentNumber);
+            startActivity(alertIntent);
         } catch (Exception e) {
-            Log.e(TAG, "Error showing overlay: " + e.getMessage());
-        }
-    }
-
-    private void hideScamOverlay() {
-        if (isOverlayShowing && windowManager != null && overlayView != null) {
-            try {
-                windowManager.removeView(overlayView);
-            } catch (Exception e) {
-                Log.e(TAG, "Error removing overlay: " + e.getMessage());
-            }
-            isOverlayShowing = false;
+            Log.e(TAG, "Error showing alert: " + e.getMessage());
+            handler.post(() -> Toast.makeText(this, "Scam Alert: " + keywords, Toast.LENGTH_LONG).show());
         }
     }
 
@@ -327,7 +278,6 @@ public class ScamMonitorService extends Service implements SpeechListener {
 
     private void stopMonitoring() {
         isServiceRunning = false;
-        hideScamOverlay();
         
         if (voskProcessor != null) {
             voskProcessor.stop();

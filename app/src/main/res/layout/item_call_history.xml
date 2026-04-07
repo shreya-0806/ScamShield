@@ -8,75 +8,76 @@
     android:background="?attr/selectableItemBackground"
     android:layout_marginBottom="6dp">
 
-    <!-- Icon -->
-    <TextView
-        android:id="@+id/tvIcon"
-        android:layout_width="40dp"
-        android:layout_height="40dp"
-        android:gravity="center"
-        android:text="📞"
-        android:textSize="18sp"
-        android:background="@drawable/circle_bg"
+    <ImageView
+        android:id="@+id/ivCallType"
+        android:layout_width="32dp"
+        android:layout_height="32dp"
+        android:src="@android:drawable/sym_call_incoming"
         android:layout_marginEnd="12dp"/>
 
-    <!-- Call Info -->
     <LinearLayout
         android:layout_width="0dp"
         android:layout_height="wrap_content"
         android:layout_weight="1"
         android:orientation="vertical">
 
-        <TextView
-            android:id="@+id/tvPhone"
-            android:layout_width="wrap_content"
+        <LinearLayout
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Phone Number"
-            android:textSize="16sp"
-            android:textStyle="bold"
-            android:textColor="?android:attr/textColorPrimary"/>
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
+
+            <TextView
+                android:id="@+id/tvCallName"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_height="wrap_content"
+                android:text="Contact Name"
+                android:textSize="16sp"
+                android:textStyle="bold"
+                android:textColor="@android:color/white"
+                android:maxLines="1"
+                android:ellipsize="end"/>
+
+            <TextView
+                android:id="@+id/tvScamIndicator"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="SCAM"
+                android:textSize="10sp"
+                android:textStyle="bold"
+                android:textColor="@android:color/white"
+                android:background="#D32F2F"
+                android:paddingHorizontal="6dp"
+                android:paddingVertical="2dp"
+                android:visibility="gone"/>
+        </LinearLayout>
 
         <TextView
-            android:id="@+id/tvDate"
+            android:id="@+id/tvCallNumber"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Date &amp; Time"
+            android:text="+91 9999999999"
             android:textSize="14sp"
-            android:textColor="?android:attr/textColorSecondary"/>
+            android:textColor="#888888"
+            android:layout_marginTop="2dp"/>
 
         <TextView
-            android:id="@+id/tvStatus"
+            android:id="@+id/tvCallDate"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Normal"
-            android:textSize="14sp"
-            android:textStyle="bold"
-            android:textColor="#4CAF50"/>
-    </LinearLayout>
-
-    <!-- Action Buttons -->
-    <LinearLayout
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:gravity="center">
-
-        <ImageButton
-            android:id="@+id/btnCallHistory"
-            android:layout_width="48dp"
-            android:layout_height="48dp"
-            android:src="@android:drawable/ic_menu_call"
-            android:background="?attr/selectableItemBackgroundBorderless"
-            android:contentDescription="Call"
-            android:tint="#4CAF50"
-            android:layout_marginEnd="8dp"/>
-
-        <Button
-            android:id="@+id/btnBlock"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="Block"
+            android:text="01 Jan 2024, 10:30 AM"
             android:textSize="12sp"
-            android:textColor="@android:color/white"
-            android:backgroundTint="#D32F2F"/>
+            android:textColor="#666666"
+            android:layout_marginTop="2dp"/>
     </LinearLayout>
+
+    <ImageButton
+        android:id="@+id/btnCallHistory"
+        android:layout_width="48dp"
+        android:layout_height="48dp"
+        android:src="@android:drawable/ic_menu_call"
+        android:background="?attr/selectableItemBackgroundBorderless"
+        android:contentDescription="Call"
+        android:tint="#4CAF50"/>
 </LinearLayout>

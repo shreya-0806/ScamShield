@@ -1,50 +1,107 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
-    android:padding="16dp">
+    android:background="#1A1A1A"
+    android:gravity="center"
+    android:padding="24dp">
 
-    <TextView
-        android:id="@+id/alertTitle"
+    <com.google.android.material.card.MaterialCardView
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:textStyle="bold"
-        android:textSize="20sp"
-        android:paddingBottom="8dp" />
+        app:cardBackgroundColor="#2D2D2D"
+        app:cardCornerRadius="16dp"
+        app:cardElevation="8dp"
+        app:strokeColor="#D32F2F"
+        app:strokeWidth="2dp">
 
-    <TextView
-        android:id="@+id/alertMatches"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:textColor="#D32F2F"
-        android:paddingBottom="8dp" />
-
-    <TextView
-        android:id="@+id/alertTranscript"
-        android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="1"
-        android:paddingBottom="8dp" />
-
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="horizontal">
-
-        <Button
-            android:id="@+id/alertPlayBtn"
-            android:layout_width="0dp"
+        <LinearLayout
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:text="Play Recording" />
+            android:orientation="vertical"
+            android:padding="24dp"
+            android:gravity="center">
 
-        <Button
-            android:id="@+id/alertDismissBtn"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:text="Dismiss" />
-    </LinearLayout>
+            <ImageView
+                android:layout_width="80dp"
+                android:layout_height="80dp"
+                android:src="@android:drawable/ic_dialog_alert"
+                app:tint="#D32F2F"
+                android:layout_marginBottom="16dp"/>
+
+            <TextView
+                android:id="@+id/tvAlertTitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="SCAM DETECTED!"
+                android:textColor="#D32F2F"
+                android:textSize="24sp"
+                android:textStyle="bold"
+                android:layout_marginBottom="8dp"/>
+
+            <TextView
+                android:id="@+id/tvAlertKeywords"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Suspicious keywords detected"
+                android:textColor="#FF9800"
+                android:textSize="18sp"
+                android:textStyle="bold"
+                android:gravity="center"
+                android:layout_marginBottom="8dp"/>
+
+            <TextView
+                android:id="@+id/tvAlertNumber"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="From: Unknown"
+                android:textColor="#AAAAAA"
+                android:textSize="14sp"
+                android:visibility="gone"
+                android:layout_marginBottom="16dp"/>
+
+            <TextView
+                android:id="@+id/tvAlertAdvice"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Do NOT share any personal information, OTPs, or bank details. Hang up immediately if possible."
+                android:textColor="#FFEB3B"
+                android:textSize="14sp"
+                android:gravity="center"
+                android:background="#333333"
+                android:padding="12dp"
+                android:layout_marginBottom="24dp"/>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical">
+
+                <Button
+                    android:id="@+id/btnEndCall"
+                    android:layout_width="match_parent"
+                    android:layout_height="56dp"
+                    android:text="End Call &amp; Report"
+                    android:backgroundTint="#D32F2F"
+                    android:textColor="@android:color/white"
+                    android:textSize="16sp"
+                    android:layout_marginBottom="12dp"/>
+
+                <Button
+                    android:id="@+id/btnDismissAlert"
+                    android:layout_width="match_parent"
+                    android:layout_height="48dp"
+                    android:text="Dismiss"
+                    android:backgroundTint="#757575"
+                    android:textColor="@android:color/white"
+                    android:textSize="14sp"/>
+
+            </LinearLayout>
+
+        </LinearLayout>
+
+    </com.google.android.material.card.MaterialCardView>
 
 </LinearLayout>

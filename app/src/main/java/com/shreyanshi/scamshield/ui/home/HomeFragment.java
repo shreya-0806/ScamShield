@@ -3,10 +3,10 @@ package com.shreyanshi.scamshield.ui.home;
 import android.Manifest;
 import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Bundle;
-import android.provider.Settings;
 import android.text.TextUtils;
 import android.view.LayoutInflater;
 import android.view.View;
@@ -18,13 +18,14 @@ import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 import androidx.fragment.app.Fragment;
 
 import com.google.android.material.floatingactionbutton.FloatingActionButton;
 import com.shreyanshi.scamshield.R;
 import com.shreyanshi.scamshield.database.ScamDatabaseHelper;
-import com.shreyanshi.scamshield.services.ScamOverlayService;
+import com.shreyanshi.scamshield.services.ScamMonitorService;
 
 import java.io.File;
 import java.text.SimpleDateFormat;
@@ -33,8 +34,9 @@ import java.util.Locale;
 
 public class HomeFragment extends Fragment {
 
+    private static final String PREF_NAME = "ScamShieldPrefs";
     private TextView tvNumber;
-    private TextView tvStatusOverlay, tvStatusVosk;
+    private TextView tvStatusVosk, tvStatusProtection;
     private final StringBuilder numberBuilder = new StringBuilder();
     private ScamDatabaseHelper dbHelper;
     private View permissionWarningView;
@@ -46,15 +48,14 @@ public class HomeFragment extends Fragment {
 
         dbHelper = new ScamDatabaseHelper(getContext());
         tvNumber = view.findViewById(R.id.tvNumber);
-        tvStatusOverlay = view.findViewById(R.id.tvStatusOverlay);
         tvStatusVosk = view.findViewById(R.id.tvStatusVosk);
+        tvStatusProtection = view.findViewById(R.id.tvStatusProtection);
         permissionWarningView = view.findViewById(R.id.homePermissionWarning);
         
         Button btnTestScam = view.findViewById(R.id.btnTestScam);
         ImageButton btnBackspace = view.findViewById(R.id.btnBackspace);
         FloatingActionButton btnCall = view.findViewById(R.id.btnCall);
 
-        // Dialer buttons
         setDigitClickListener(view, R.id.btn0, "0");
         setDigitClickListener(view, R.id.btn1, "1");
         setDigitClickListener(view, R.id.btn2, "2");
@@ -78,16 +79,25 @@ public class HomeFragment extends Fragment {
         btnCall.setOnClickListener(v -> {
             String number = numberBuilder.toString();
             if (!TextUtils.isEmpty(number)) {
-                dialNumber(number);
+                makeCall(number);
             } else {
                 Toast.makeText(getContext(), "Please enter a number", Toast.LENGTH_SHORT).show();
             }
         });
 
         btnTestScam.setOnClickListener(v -> {
-            Intent i = new Intent(requireContext(), ScamOverlayService.class);
-            i.putExtra("action", "SHOW_ALERT");
+            SharedPreferences prefs = requireContext().getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
+            boolean enabled = prefs.getBoolean("scam_alerts_enabled", true);
+            
+            if (!enabled) {
+                Toast.makeText(getContext(), "Enable scam detection in Settings first", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            
+            Intent i = new Intent(requireContext(), ScamMonitorService.class);
+            i.setAction("SHOW_TEST_ALERT");
             i.putExtra("keywords", "TEST_SCAM_ALERT");
+            i.putExtra("number", "Test Number");
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
                 requireContext().startForegroundService(i);
             } else {
@@ -115,13 +125,19 @@ public class HomeFragment extends Fragment {
         tvNumber.setText(numberBuilder.toString());
     }
 
-    private void dialNumber(String number) {
+    private void makeCall(String number) {
         String currentDateTime = new SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.getDefault()).format(new Date());
         dbHelper.insertCallLog(number, currentDateTime, false);
 
-        Intent intent = new Intent(Intent.ACTION_DIAL);
-        intent.setData(Uri.parse("tel:" + Uri.encode(number)));
-        startActivity(intent);
+        if (ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.CALL_PHONE) == PackageManager.PERMISSION_GRANTED) {
+            Intent callIntent = new Intent(Intent.ACTION_CALL);
+            callIntent.setData(Uri.parse("tel:" + Uri.encode(number)));
+            startActivity(callIntent);
+        } else {
+            Intent dialIntent = new Intent(Intent.ACTION_DIAL);
+            dialIntent.setData(Uri.parse("tel:" + Uri.encode(number)));
+            startActivity(dialIntent);
+        }
     }
 
     @Override
@@ -133,21 +149,17 @@ public class HomeFragment extends Fragment {
     private void updateStatusPanel() {
         Context context = requireContext();
         
-        // Check Overlay Permission
-        boolean overlayGranted = true;
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
-            overlayGranted = Settings.canDrawOverlays(context);
-        }
-        tvStatusOverlay.setText(overlayGranted ? "GRANTED" : "MISSING");
-        tvStatusOverlay.setTextColor(overlayGranted ? 0xFF4CAF50 : 0xFFF44336);
+        SharedPreferences prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
+        boolean protectionEnabled = prefs.getBoolean("scam_alerts_enabled", true);
+        tvStatusProtection.setText(protectionEnabled ? "ACTIVE" : "INACTIVE");
+        tvStatusProtection.setTextColor(protectionEnabled ? 0xFF4CAF50 : 0xFFF44336);
 
-        // Check Vosk Model
-        File modelFolder = new File(context.getFilesDir(), "vosk-model");
-        boolean modelExists = modelFolder.exists() && modelFolder.isDirectory();
-        tvStatusVosk.setText(modelExists ? "INSTALLED" : "MISSING");
-        tvStatusVosk.setTextColor(modelExists ? 0xFF4CAF50 : 0xFFF44336);
+        File modelDir = new File(context.getFilesDir(), "vosk-model-small-en-in");
+        File altModelDir = new File(context.getFilesDir(), "vosk-model");
+        boolean modelExists = modelDir.exists() || altModelDir.exists();
+        tvStatusVosk.setText(modelExists ? "READY" : "LOADING...");
+        tvStatusVosk.setTextColor(modelExists ? 0xFF4CAF50 : 0xFFFF9800);
 
-        // Check Mic Permission
         boolean micGranted = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED;
         permissionWarningView.setVisibility(micGranted ? View.GONE : View.VISIBLE);
     }

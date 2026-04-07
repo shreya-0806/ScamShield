@@ -109,6 +109,15 @@ public class CallRecordingService extends Service {
                 Log.d("Recorder", "Recording stopped");
             }
 
+            if (lastRecordingPath != null) {
+                File recording = new File(lastRecordingPath);
+                if (recording.exists()) {
+                    recording.delete();
+                    Log.d("Recorder", "Recording file deleted for privacy");
+                }
+                lastRecordingPath = null;
+            }
+
             if (backoffHandler != null) {
                 backoffHandler.getLooper().quitSafely();
                 backoffHandler = null;
