@@ -50,48 +50,29 @@ public class CallReceiver extends BroadcastReceiver {
         boolean enabled = prefs.getBoolean("scam_alerts_enabled", true);
         if (!enabled) return;
 
-        // 1. Start Overlay Service
-        try {
-            Intent serviceIntent = new Intent(context, ScamOverlayService.class);
-            serviceIntent.putExtra("action", "START_MONITORING");
-            serviceIntent.putExtra("number", number);
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-                context.startForegroundService(serviceIntent);
-            } else {
-                context.startService(serviceIntent);
-            }
-        } catch (Exception e) {
-            Log.e(TAG, "Failed to start ScamOverlayService", e);
-        }
-
-        // 2. Start Live Detection Service (Microphone)
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
             try {
-                Intent live = new Intent(context, LiveDetectionService.class);
-                live.setAction(LiveDetectionService.ACTION_START);
+                Intent monitorIntent = new Intent(context, ScamMonitorService.class);
+                monitorIntent.setAction(ScamMonitorService.ACTION_START);
+                monitorIntent.putExtra("number", number);
                 if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-                    context.startForegroundService(live);
+                    context.startForegroundService(monitorIntent);
                 } else {
-                    context.startService(live);
+                    context.startService(monitorIntent);
                 }
             } catch (Exception e) {
-                // On Android 14+, this might fail if the app is backgrounded.
-                Log.e(TAG, "Failed to start LiveDetectionService (Background restriction)", e);
+                Log.e(TAG, "Failed to start ScamMonitorService", e);
             }
         }
     }
 
     private void stopMonitoring(Context context) {
         try {
-            Intent serviceIntent = new Intent(context, ScamOverlayService.class);
-            serviceIntent.putExtra("action", "STOP_MONITORING");
-            context.startService(serviceIntent);
-
-            Intent live = new Intent(context, LiveDetectionService.class);
-            live.setAction(LiveDetectionService.ACTION_STOP);
-            context.startService(live);
+            Intent stopIntent = new Intent(context, ScamMonitorService.class);
+            stopIntent.setAction(ScamMonitorService.ACTION_STOP);
+            context.startService(stopIntent);
         } catch (Exception e) {
-            Log.e(TAG, "Error stopping services", e);
+            Log.e(TAG, "Error stopping monitoring service", e);
         }
     }
 }

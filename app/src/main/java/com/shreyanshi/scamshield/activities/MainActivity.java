@@ -8,6 +8,8 @@ import android.Manifest;
 import android.content.pm.PackageManager;
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.net.Uri;
+import android.provider.Settings;
 import android.telecom.TelecomManager;
 import android.util.Log;
 
@@ -28,6 +30,7 @@ public class MainActivity extends AppCompatActivity {
 
     private static final int REQUEST_START_PERMISSIONS = 200;
     private static final int REQUEST_ID_DEFAULT_DIALER = 201;
+    private static final int REQUEST_OVERLAY_PERMISSION = 202;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -42,6 +45,7 @@ public class MainActivity extends AppCompatActivity {
         if (scamAlerts) {
             ensureStartPermissions();
             requestDefaultDialerRole();
+            checkOverlayPermission();
         }
 
         setContentView(R.layout.activity_main);
@@ -51,6 +55,23 @@ public class MainActivity extends AppCompatActivity {
             loadFragmentByName("com.shreyanshi.scamshield.ui.home.HomeFragment");
         }
         bottomNavigation.setOnItemSelectedListener(item -> loadFragmentById(item.getItemId()));
+    }
+
+    private void checkOverlayPermission() {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+            if (!Settings.canDrawOverlays(this)) {
+                new AlertDialog.Builder(this)
+                        .setTitle("Overlay Permission Required")
+                        .setMessage("ScamShield needs permission to display alerts over other apps during calls. Please enable 'Display over other apps'.")
+                        .setPositiveButton("Settings", (dialog, which) -> {
+                            Intent intent = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                    Uri.parse("package:" + getPackageName()));
+                            startActivityForResult(intent, REQUEST_OVERLAY_PERMISSION);
+                        })
+                        .setNegativeButton("Later", null)
+                        .show();
+            }
+        }
     }
 
     private void requestDefaultDialerRole() {
@@ -96,7 +117,8 @@ public class MainActivity extends AppCompatActivity {
             Manifest.permission.RECORD_AUDIO,
             Manifest.permission.READ_PHONE_STATE,
             Manifest.permission.CALL_PHONE,
-            Manifest.permission.READ_CALL_LOG
+            Manifest.permission.READ_CALL_LOG,
+            Manifest.permission.READ_CONTACTS
         };
         
         boolean needsRequest = false;
@@ -132,5 +154,19 @@ public class MainActivity extends AppCompatActivity {
             Fragment f = getSupportFragmentManager().getFragmentFactory().instantiate(getClassLoader(), fqcn);
             getSupportFragmentManager().beginTransaction().replace(R.id.fragment_container, f).commit();
         } catch (Exception ignored) {}
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == REQUEST_START_PERMISSIONS) {
+            // Check if fragment is HomeFragment and refresh it
+            Fragment f = getSupportFragmentManager().findFragmentById(R.id.fragment_container);
+            if (f != null && f.getClass().getName().contains("HomeFragment")) {
+                loadFragmentByName(f.getClass().getName());
+            } else if (f != null && f.getClass().getName().contains("ContactsFragment")) {
+                 loadFragmentByName(f.getClass().getName());
+            }
+        }
     }
 }

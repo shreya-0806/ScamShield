@@ -29,13 +29,18 @@
         </activity>
 
         <service 
-            android:name="com.shreyanshi.scamshield.services.LiveDetectionService"
+            android:name="com.shreyanshi.scamshield.services.ScamMonitorService"
             android:enabled="true"
             android:exported="false"
             android:foregroundServiceType="microphone|specialUse">
             <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Real-time scam detection and alerting during calls" />
         </service>
+
+        <service
+            android:name="com.shreyanshi.scamshield.services.ScamOverlayService"
+            android:enabled="true"
+            android:exported="false" />
 
         <receiver android:name="com.shreyanshi.scamshield.services.CallReceiver" android:exported="true">
             <intent-filter>
