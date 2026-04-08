@@ -17,6 +17,7 @@ ScamShield is an Android app that detects scam calls in real-time using offline 
 - `VoskProcessor` - Offline speech-to-text processing
 - `ScamDatabaseHelper` - SQLite database for call history
 - `NewsFragment` - Dynamic scam news with RSS feed
+- `BlockedNumberDatabase` - Block/unblock contacts
 
 ## Permissions (All Optional Except Core)
 - `RECORD_AUDIO` - Required for call monitoring (optional, show warning if denied)
@@ -28,9 +29,10 @@ ScamShield is an Android app that detects scam calls in real-time using offline 
 - `POST_NOTIFICATIONS` - Show alerts
 - `INTERNET` - Fetch news RSS feed
 - `SYSTEM_ALERT_WINDOW` - NOT REQUIRED (use Activity instead)
+- `ANSWER_PHONE_CALLS` - Answer phone calls
 
 ## DO
-1. Always bundle Vosk model in APK assets (path: `assets/vosk-model-small-en-in/`)
+1. Always bundle Vosk model in APK assets (path: `assets/vosk-model/`)
 2. Use `startForegroundService()` for monitoring services on Android O+
 3. Handle all permissions gracefully with fallback UI
 4. Use dark theme (#121212 background) for consistent UI
@@ -42,6 +44,8 @@ ScamShield is an Android app that detects scam calls in real-time using offline 
 10. Fetch scam news from Google News RSS feed
 11. Read call history from system CallLog provider
 12. Use custom app icon from `icon/shieldicon.jpeg` (regenerate mipmap icons when changed)
+13. Dark mode toggle in Settings applies theme immediately with recreate()
+14. Contacts use BlockedNumberDatabase for block/unblock functionality
 
 ## DON'T
 1. DON'T require SYSTEM_ALERT_WINDOW (causes install issues on Moto devices)
@@ -55,10 +59,10 @@ ScamShield is an Android app that detects scam calls in real-time using offline 
 ## Common Issues & Solutions
 
 ### Vosk Model Missing
-- Ensure model is in `app/src/main/assets/vosk-model-small-en-in/`
+- Ensure model is in `app/src/main/assets/vosk-model/`
 - Check that all model files are present (am/, graph/, ivector/, conf/)
 - Model should auto-unpack on first run to `context.getFilesDir()`
-- Model path key: `vosk-model-small-en-in`
+- Model path key: `vosk-model`
 
 ### Call Recording (India-Specific)
 - On Android 10+, call audio is restricted
@@ -85,7 +89,7 @@ ScamShield is an Android app that detects scam calls in real-time using offline 
 ## Vosk Model Setup
 The Vosk model should be placed at:
 ```
-app/src/main/assets/vosk-model-small-en-in/
+app/src/main/assets/vosk-model/
 ├── am/
 ├── conf/
 ├── graph/
@@ -109,3 +113,11 @@ for folder, size in [('mipmap-mdpi',48), ('mipmap-hdpi',72), ('mipmap-xhdpi',96)
     img.resize((size,size), Image.Resampling.LANCZOS).save(f'app/src/main/res/{folder}/ic_launcher.webp', 'WEBP')
     img.resize((size,size), Image.Resampling.LANCZOS).save(f'app/src/main/res/{folder}/ic_launcher_round.webp', 'WEBP')
 ```
+
+## UI Changes Made
+- Home renamed to "Dialer" in bottom navigation
+- System status panel (scam protection + Vosk model status) moved to Settings
+- Dark mode toggle now applies theme immediately with activity recreate
+- News now shows images, title, description with "Read More" button
+- Contacts now have: star (favorite - gold when active), block (red when blocked, toggle unblock), delete button
+- Call history now shows time only, cleaner Google Dialer style

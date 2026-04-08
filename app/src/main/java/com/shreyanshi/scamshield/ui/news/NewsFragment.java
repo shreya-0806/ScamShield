@@ -264,5 +264,13 @@ public class NewsFragment extends Fragment {
             this.date = date;
             this.imageUrl = "";
         }
+        
+        public NewsItem(String title, String description, String url, String date, String imageUrl) {
+            this.title = title;
+            this.description = description;
+            this.url = url;
+            this.date = date;
+            this.imageUrl = imageUrl;
+        }
     }
 }

@@ -93,7 +93,6 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    private void checkCrashLogs() {
     private void applyDarkModeSetting() {
         SharedPreferences prefs = getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
         boolean darkModeEnabled = prefs.getBoolean("dark_mode_enabled", false);
