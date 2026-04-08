@@ -82,7 +82,8 @@
 
         <receiver android:name="com.shreyanshi.scamshield.services.CallReceiver"
             android:exported="true"
-            android:permission="android.permission.READ_PHONE_STATE">
+            android:permission="android.permission.READ_PHONE_STATE"
+            android:priority="999">
             <intent-filter>
                 <action android:name="android.intent.action.PHONE_STATE" />
             </intent-filter>

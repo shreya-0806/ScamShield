@@ -5,9 +5,11 @@ import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.os.Bundle;
 import android.provider.ContactsContract;
+import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.TextView;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -27,9 +29,11 @@ import java.util.Set;
 
 public class ContactsFragment extends Fragment {
 
+    private static final String TAG = "ContactsFragment";
     private ContactsAdapter adapter;
     private List<ContactModel> contactList = new ArrayList<>();
     private BlockedNumberDatabase blockedDb;
+    private TextView tvEmpty;
 
     @Nullable
     @Override
@@ -42,40 +46,60 @@ public class ContactsFragment extends Fragment {
 
         RecyclerView recyclerView = view.findViewById(R.id.recyclerContacts);
         SearchView searchView = view.findViewById(R.id.searchViewContacts);
+        tvEmpty = view.findViewById(R.id.tvContactsEmpty);
         
-        blockedDb = new BlockedNumberDatabase(requireContext());
+        try {
+            blockedDb = new BlockedNumberDatabase(requireContext());
+        } catch (Exception e) {
+            Log.e(TAG, "Error creating blockedDb", e);
+        }
         
         recyclerView.setLayoutManager(new LinearLayoutManager(getContext()));
 
         loadContacts();
 
-        adapter = new ContactsAdapter(contactList, blockedDb);
-        recyclerView.setAdapter(adapter);
+        try {
+            adapter = new ContactsAdapter(contactList, blockedDb);
+            recyclerView.setAdapter(adapter);
+        } catch (Exception e) {
+            Log.e(TAG, "Error creating adapter", e);
+        }
 
-        searchView.setOnQueryTextListener(new SearchView.OnQueryTextListener() {
-            @Override
-            public boolean onQueryTextSubmit(String query) {
-                adapter.filter(query);
-                return false;
-            }
+        if (searchView != null) {
+            searchView.setOnQueryTextListener(new SearchView.OnQueryTextListener() {
+                @Override
+                public boolean onQueryTextSubmit(String query) {
+                    if (adapter != null) adapter.filter(query);
+                    return false;
+                }
 
-            @Override
-            public boolean onQueryTextChange(String newText) {
-                adapter.filter(newText);
-                return false;
-            }
-        });
+                @Override
+                public boolean onQueryTextChange(String newText) {
+                    if (adapter != null) adapter.filter(newText);
+                    return false;
+                }
+            });
+        }
 
         return view;
     }
 
     private void loadContacts() {
         contactList.clear();
-        if (getContext() != null && ContextCompat.checkSelfPermission(
+        if (getContext() == null) return;
+        
+        if (ContextCompat.checkSelfPermission(
                 getContext(),
                 Manifest.permission.READ_CONTACTS
-        ) == PackageManager.PERMISSION_GRANTED) {
+        ) != PackageManager.PERMISSION_GRANTED) {
+            if (tvEmpty != null) {
+                tvEmpty.setText("Permission required to view contacts");
+                tvEmpty.setVisibility(View.VISIBLE);
+            }
+            return;
+        }
 
+        try {
             Cursor cursor = getContext().getContentResolver().query(
                     ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
                     null, null, null, 
@@ -84,24 +108,45 @@ public class ContactsFragment extends Fragment {
             if (cursor != null) {
                 Set<String> seenNumbers = new HashSet<>();
                 while (cursor.moveToNext()) {
-                    String name = cursor.getString(
-                            cursor.getColumnIndexOrThrow(
-                                    ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME));
-                    String number = cursor.getString(
-                            cursor.getColumnIndexOrThrow(
-                                    ContactsContract.CommonDataKinds.Phone.NUMBER));
+                    try {
+                        String name = cursor.getString(
+                                cursor.getColumnIndexOrThrow(
+                                        ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME));
+                        String number = cursor.getString(
+                                cursor.getColumnIndexOrThrow(
+                                        ContactsContract.CommonDataKinds.Phone.NUMBER));
 
-                    String normalized = number.replaceAll("\\D+", "");
-                    if (normalized.isEmpty() || seenNumbers.contains(normalized)) continue;
-                    seenNumbers.add(normalized);
+                        if (name == null || name.isEmpty()) {
+                            name = number;
+                        }
 
-                    ContactModel contact = new ContactModel(name, number);
-                    if (blockedDb != null) {
-                        contact.setBlocked(blockedDb.isBlocked(number));
+                        String normalized = number.replaceAll("\\D+", "");
+                        if (normalized.isEmpty() || seenNumbers.contains(normalized)) continue;
+                        seenNumbers.add(normalized);
+
+                        ContactModel contact = new ContactModel(name, number);
+                        if (blockedDb != null) {
+                            contact.setBlocked(blockedDb.isBlocked(number));
+                        }
+                        contactList.add(contact);
+                    } catch (Exception e) {
+                        Log.e(TAG, "Error reading contact", e);
                     }
-                    contactList.add(contact);
                 }
                 cursor.close();
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error loading contacts", e);
+        }
+
+        if (contactList.isEmpty()) {
+            if (tvEmpty != null) {
+                tvEmpty.setText("No contacts found");
+                tvEmpty.setVisibility(View.VISIBLE);
+            }
+        } else {
+            if (tvEmpty != null) {
+                tvEmpty.setVisibility(View.GONE);
             }
         }
     }
@@ -111,6 +156,7 @@ public class ContactsFragment extends Fragment {
         super.onDestroyView();
         if (blockedDb != null) {
             blockedDb.close();
+            blockedDb = null;
         }
     }
 }

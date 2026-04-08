@@ -85,11 +85,7 @@ public class NewsAdapter extends RecyclerView.Adapter<NewsAdapter.NewsViewHolder
                 ivNewsImage.setVisibility(View.GONE);
             }
 
-            itemView.setOnClickListener(v -> {
-                if (listener != null) {
-                    listener.onNewsClick(item.url);
-                }
-            });
+            itemView.setOnClickListener(null);
 
             tvReadMore.setOnClickListener(v -> {
                 if (listener != null) {

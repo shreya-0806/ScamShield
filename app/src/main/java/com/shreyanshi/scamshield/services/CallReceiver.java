@@ -13,66 +13,81 @@ import androidx.core.content.ContextCompat;
 
 public class CallReceiver extends BroadcastReceiver {
     private static final String TAG = "ScamShield-Receiver";
-    private static boolean isCallActive = false;
 
     @Override
     public void onReceive(Context context, Intent intent) {
-        try {
-            String state = intent.getStringExtra(TelephonyManager.EXTRA_STATE);
+        if (intent == null) return;
+        
+        String action = intent.getAction();
+        Log.d(TAG, "Broadcast received: " + action);
 
-            if (state == null) {
-                // Outgoing call detection (NEW_OUTGOING_CALL)
-                String number = intent.getStringExtra(Intent.EXTRA_PHONE_NUMBER);
-                startMonitoring(context, number);
+        try {
+            SharedPreferences prefs = context.getSharedPreferences("ScamShieldPrefs", Context.MODE_PRIVATE);
+            boolean enabled = prefs.getBoolean("scam_alerts_enabled", true);
+            
+            if (!enabled) {
+                Log.d(TAG, "Scam detection disabled, ignoring call");
                 return;
             }
 
-            Log.d(TAG, "Phone State Change: " + state);
-
-            if (state.equals(TelephonyManager.EXTRA_STATE_OFFHOOK)) {
-                // Call answered (Incoming or Outgoing)
-                isCallActive = true;
-                startMonitoring(context, "");
-            } else if (state.equals(TelephonyManager.EXTRA_STATE_IDLE)) {
-                // Call ended
-                if (isCallActive) {
-                    isCallActive = false;
-                    stopMonitoring(context);
+            if (Intent.ACTION_NEW_OUTGOING_CALL.equals(action)) {
+                String number = intent.getStringExtra(Intent.EXTRA_PHONE_NUMBER);
+                Log.d(TAG, "Outgoing call to: " + number);
+                startScamMonitor(context, number);
+            } 
+            else if (TelephonyManager.ACTION_PHONE_STATE_CHANGED.equals(action)) {
+                String state = intent.getStringExtra(TelephonyManager.EXTRA_STATE);
+                Log.d(TAG, "Phone state: " + state);
+                
+                if (TelephonyManager.EXTRA_STATE_OFFHOOK.equals(state)) {
+                    startScamMonitor(context, "");
+                } 
+                else if (TelephonyManager.EXTRA_STATE_IDLE.equals(state)) {
+                    stopScamMonitor(context);
                 }
             }
         } catch (Exception e) {
-            Log.e(TAG, "Error in CallReceiver", e);
+            Log.e(TAG, "Error processing broadcast: " + e.getMessage(), e);
         }
     }
 
-    private void startMonitoring(Context context, String number) {
-        SharedPreferences prefs = context.getSharedPreferences("ScamShieldPrefs", Context.MODE_PRIVATE);
-        boolean enabled = prefs.getBoolean("scam_alerts_enabled", true);
-        if (!enabled) return;
-
-        if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
-            try {
-                Intent monitorIntent = new Intent(context, ScamMonitorService.class);
-                monitorIntent.setAction(ScamMonitorService.ACTION_START);
-                monitorIntent.putExtra("number", number);
-                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-                    context.startForegroundService(monitorIntent);
-                } else {
-                    context.startService(monitorIntent);
-                }
-            } catch (Exception e) {
-                Log.e(TAG, "Failed to start ScamMonitorService", e);
-            }
-        }
-    }
-
-    private void stopMonitoring(Context context) {
+    private void startScamMonitor(Context context, String number) {
         try {
-            Intent stopIntent = new Intent(context, ScamMonitorService.class);
-            stopIntent.setAction(ScamMonitorService.ACTION_STOP);
-            context.startService(stopIntent);
+            if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) 
+                    != PackageManager.PERMISSION_GRANTED) {
+                Log.w(TAG, "RECORD_AUDIO permission not granted");
+                return;
+            }
+
+            Log.i(TAG, "Starting ScamMonitorService...");
+            
+            Intent serviceIntent = new Intent(context, ScamMonitorService.class);
+            serviceIntent.setAction(ScamMonitorService.ACTION_START);
+            serviceIntent.putExtra("number", number != null ? number : "");
+            
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                context.startForegroundService(serviceIntent);
+            } else {
+                context.startService(serviceIntent);
+            }
+            
+            Log.i(TAG, "ScamMonitorService started");
         } catch (Exception e) {
-            Log.e(TAG, "Error stopping monitoring service", e);
+            Log.e(TAG, "Failed to start ScamMonitorService: " + e.getMessage(), e);
+        }
+    }
+
+    private void stopScamMonitor(Context context) {
+        try {
+            Log.i(TAG, "Stopping ScamMonitorService...");
+            
+            Intent serviceIntent = new Intent(context, ScamMonitorService.class);
+            serviceIntent.setAction(ScamMonitorService.ACTION_STOP);
+            context.startService(serviceIntent);
+            
+            Log.i(TAG, "ScamMonitorService stopped");
+        } catch (Exception e) {
+            Log.e(TAG, "Error stopping service: " + e.getMessage(), e);
         }
     }
 }

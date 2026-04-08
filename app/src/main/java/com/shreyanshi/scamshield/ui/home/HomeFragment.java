@@ -5,41 +5,45 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
+import android.database.Cursor;
 import android.net.Uri;
 import android.os.Bundle;
+import android.provider.ContactsContract;
+import android.text.Editable;
+import android.text.TextWatcher;
 import android.text.TextUtils;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
-import android.widget.Button;
 import android.widget.ImageButton;
 import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
-import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 import androidx.fragment.app.Fragment;
+import androidx.recyclerview.widget.LinearLayoutManager;
+import androidx.recyclerview.widget.RecyclerView;
 
 import com.google.android.material.floatingactionbutton.FloatingActionButton;
 import com.shreyanshi.scamshield.R;
 import com.shreyanshi.scamshield.database.ScamDatabaseHelper;
-import com.shreyanshi.scamshield.services.ScamMonitorService;
 
-import java.io.File;
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
 import java.util.Date;
+import java.util.List;
 import java.util.Locale;
 
 public class HomeFragment extends Fragment {
 
     private static final String PREF_NAME = "ScamShieldPrefs";
     private TextView tvNumber;
-    private TextView tvStatusVosk, tvStatusProtection;
     private final StringBuilder numberBuilder = new StringBuilder();
     private ScamDatabaseHelper dbHelper;
-    private View permissionWarningView;
+    private RecyclerView rvSuggestions;
+    private ContactSuggestionAdapter suggestionAdapter;
 
     @Nullable
     @Override
@@ -48,11 +52,10 @@ public class HomeFragment extends Fragment {
 
         dbHelper = new ScamDatabaseHelper(getContext());
         tvNumber = view.findViewById(R.id.tvNumber);
-        tvStatusVosk = view.findViewById(R.id.tvStatusVosk);
-        tvStatusProtection = view.findViewById(R.id.tvStatusProtection);
-        permissionWarningView = view.findViewById(R.id.homePermissionWarning);
+        rvSuggestions = view.findViewById(R.id.rvContactSuggestions);
         
-        Button btnTestScam = view.findViewById(R.id.btnTestScam);
+        setupContactSuggestions(view);
+
         ImageButton btnBackspace = view.findViewById(R.id.btnBackspace);
         FloatingActionButton btnCall = view.findViewById(R.id.btnCall);
 
@@ -85,32 +88,77 @@ public class HomeFragment extends Fragment {
             }
         });
 
-        btnTestScam.setOnClickListener(v -> {
-            SharedPreferences prefs = requireContext().getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
-            boolean enabled = prefs.getBoolean("scam_alerts_enabled", true);
-            
-            if (!enabled) {
-                Toast.makeText(getContext(), "Enable scam detection in Settings first", Toast.LENGTH_SHORT).show();
-                return;
-            }
-            
-            Intent i = new Intent(requireContext(), ScamMonitorService.class);
-            i.setAction("SHOW_TEST_ALERT");
-            i.putExtra("keywords", "TEST_SCAM_ALERT");
-            i.putExtra("number", "Test Number");
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-                requireContext().startForegroundService(i);
-            } else {
-                requireContext().startService(i);
-            }
-            Toast.makeText(getContext(), "Showing test alert...", Toast.LENGTH_SHORT).show();
-        });
+        tvNumber.addTextChangedListener(new TextWatcher() {
+            @Override
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
 
-        permissionWarningView.setOnClickListener(v -> {
-            requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, 100);
+            @Override
+            public void onTextChanged(CharSequence s, int start, int before, int count) {
+                String query = s.toString();
+                if (query.length() >= 2) {
+                    searchContacts(query);
+                } else {
+                    rvSuggestions.setVisibility(View.GONE);
+                }
+            }
+
+            @Override
+            public void afterTextChanged(Editable s) {}
         });
 
         return view;
+    }
+
+    private void setupContactSuggestions(View view) {
+        suggestionAdapter = new ContactSuggestionAdapter();
+        rvSuggestions.setLayoutManager(new LinearLayoutManager(getContext()));
+        rvSuggestions.setAdapter(suggestionAdapter);
+        
+        suggestionAdapter.setListener(number -> {
+            numberBuilder.setLength(0);
+            numberBuilder.append(number);
+            tvNumber.setText(number);
+            rvSuggestions.setVisibility(View.GONE);
+            makeCall(number);
+        });
+    }
+
+    private void searchContacts(String query) {
+        if (getContext() == null) return;
+        
+        if (ContextCompat.checkSelfPermission(getContext(), Manifest.permission.READ_CONTACTS) 
+                != PackageManager.PERMISSION_GRANTED) {
+            rvSuggestions.setVisibility(View.GONE);
+            return;
+        }
+
+        List<ContactSuggestionAdapter.ContactInfo> suggestions = new ArrayList<>();
+        String normalizedQuery = query.replaceAll("\\D+", "");
+        
+        Cursor cursor = getContext().getContentResolver().query(
+                ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
+                null,
+                "display_name LIKE ? OR phone LIKE ?",
+                new String[]{"%" + query + "%", "%" + normalizedQuery + "%"},
+                "display_name ASC");
+
+        if (cursor != null) {
+            int count = 0;
+            while (cursor.moveToNext() && count < 5) {
+                String name = cursor.getString(cursor.getColumnIndexOrThrow(ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME));
+                String number = cursor.getString(cursor.getColumnIndexOrThrow(ContactsContract.CommonDataKinds.Phone.NUMBER));
+                suggestions.add(new ContactSuggestionAdapter.ContactInfo(name, number));
+                count++;
+            }
+            cursor.close();
+        }
+
+        if (suggestions.isEmpty()) {
+            rvSuggestions.setVisibility(View.GONE);
+        } else {
+            suggestionAdapter.updateContacts(suggestions);
+            rvSuggestions.setVisibility(View.VISIBLE);
+        }
     }
 
     private void setDigitClickListener(View parent, int id, String digit) {
@@ -138,29 +186,5 @@ public class HomeFragment extends Fragment {
             dialIntent.setData(Uri.parse("tel:" + Uri.encode(number)));
             startActivity(dialIntent);
         }
-    }
-
-    @Override
-    public void onResume() {
-        super.onResume();
-        updateStatusPanel();
-    }
-
-    private void updateStatusPanel() {
-        Context context = requireContext();
-        
-        SharedPreferences prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
-        boolean protectionEnabled = prefs.getBoolean("scam_alerts_enabled", true);
-        tvStatusProtection.setText(protectionEnabled ? "ACTIVE" : "INACTIVE");
-        tvStatusProtection.setTextColor(protectionEnabled ? 0xFF4CAF50 : 0xFFF44336);
-
-        File modelDir = new File(context.getFilesDir(), "vosk-model");
-        File altModelDir = new File(context.getFilesDir(), "vosk-model-small-en-in");
-        boolean modelExists = modelDir.exists() || altModelDir.exists();
-        tvStatusVosk.setText(modelExists ? "READY" : "LOADING...");
-        tvStatusVosk.setTextColor(modelExists ? 0xFF4CAF50 : 0xFFFF9800);
-
-        boolean micGranted = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED;
-        permissionWarningView.setVisibility(micGranted ? View.GONE : View.VISIBLE);
     }
 }

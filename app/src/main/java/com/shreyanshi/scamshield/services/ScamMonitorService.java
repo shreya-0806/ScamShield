@@ -146,42 +146,68 @@ public class ScamMonitorService extends Service implements SpeechListener {
         boolean hasRecordAudio = ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED;
         if (!hasRecordAudio) {
             Log.w(TAG, "Record audio permission missing");
+            showToast("Microphone permission required for scam detection");
             return;
         }
 
+        Log.i(TAG, "Initializing speech recognition...");
+        
         try {
             voskProcessor = new VoskProcessor(this, this);
+            
             handler.postDelayed(() -> {
                 if (voskProcessor != null && voskProcessor.isAvailable()) {
                     usingVosk = true;
                     voskProcessor.start();
-                    Log.i(TAG, "Vosk detection started");
+                    Log.i(TAG, "Vosk STT started - listening for keywords");
+                    showToast("ScamShield is monitoring");
                 } else {
-                    Log.w(TAG, "Vosk model not available, using Google Speech");
+                    Log.w(TAG, "Vosk not available, using Google Speech");
                     setupGoogleSpeech();
                 }
-            }, 1500);
+            }, 2000);
         } catch (Exception e) {
-            Log.e(TAG, "Vosk initialization failed", e);
+            Log.e(TAG, "Vosk init failed: " + e.getMessage(), e);
+            setupGoogleSpeech();
         }
+    }
+    
+    private void showToast(String msg) {
+        try {
+            handler.post(() -> Toast.makeText(this, msg, Toast.LENGTH_SHORT).show());
+        } catch (Exception ignored) {}
     }
 
     private void setupGoogleSpeech() {
-        if (SpeechRecognizer.isRecognitionAvailable(this)) {
-            try {
-                speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this);
-                speechRecognizer.setRecognitionListener(new GoogleRecognitionListener());
-
-                recognizerIntent = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
-                recognizerIntent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
-                recognizerIntent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault());
-                recognizerIntent.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true);
-                recognizerIntent.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 5);
-                
-                startListeningGoogle();
-            } catch (Exception e) {
-                Log.e(TAG, "Google Speech setup failed", e);
+        try {
+            if (!SpeechRecognizer.isRecognitionAvailable(this)) {
+                Log.e(TAG, "Google Speech recognition not available");
+                showToast("Speech recognition not available on this device");
+                return;
             }
+            
+            Log.i(TAG, "Setting up Google Speech Recognizer");
+            
+            if (speechRecognizer != null) {
+                speechRecognizer.destroy();
+            }
+            
+            speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this);
+            speechRecognizer.setRecognitionListener(new GoogleRecognitionListener());
+
+            recognizerIntent = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
+            recognizerIntent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
+            recognizerIntent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, "en-IN");
+            recognizerIntent.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true);
+            recognizerIntent.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3);
+            recognizerIntent.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 1000);
+            recognizerIntent.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1500);
+            
+            startListeningGoogle();
+            Log.i(TAG, "Google Speech listening started");
+        } catch (Exception e) {
+            Log.e(TAG, "Google Speech setup failed: " + e.getMessage(), e);
+            showToast("Failed to start voice detection");
         }
     }
 

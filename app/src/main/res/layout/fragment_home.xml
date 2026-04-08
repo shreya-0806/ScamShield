@@ -3,92 +3,14 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#121212"
-    android:padding="16dp">
-
-    <LinearLayout
-        android:id="@+id/statusPanel"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:background="#1E1E1E"
-        android:padding="12dp"
-        android:layout_marginBottom="16dp">
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="System Status"
-            android:textColor="#888888"
-            android:textSize="12sp"
-            android:textStyle="bold"
-            android:layout_marginBottom="8dp"/>
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal">
-            <TextView
-                android:layout_width="0dp"
-                android:layout_weight="1"
-                android:layout_height="wrap_content"
-                android:text="Scam Protection:"
-                android:textColor="@android:color/white" />
-            <TextView
-                android:id="@+id/tvStatusProtection"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="CHECKING..."
-                android:textStyle="bold" />
-        </LinearLayout>
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            android:orientation="horizontal">
-            <TextView
-                android:layout_width="0dp"
-                android:layout_weight="1"
-                android:layout_height="wrap_content"
-                android:text="Offline Vosk Model:"
-                android:textColor="@android:color/white" />
-            <TextView
-                android:id="@+id/tvStatusVosk"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="CHECKING..."
-                android:textStyle="bold" />
-        </LinearLayout>
-
-        <Button
-            android:id="@+id/btnTestScam"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
-            android:text="Test Scam Alert"
-            android:backgroundTint="#D32F2F" />
-
-    </LinearLayout>
-
-    <TextView
-        android:id="@+id/homePermissionWarning"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_below="@id/statusPanel"
-        android:background="#FFF3F3"
-        android:textColor="#B00020"
-        android:padding="10dp"
-        android:text="Microphone permission required for scam detection. Tap to grant."
-        android:visibility="gone" />
+    android:background="?android:attr/colorBackground">
 
     <LinearLayout
         android:id="@+id/displayArea"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_below="@id/homePermissionWarning"
         android:orientation="vertical"
-        android:layout_marginTop="16dp">
+        android:padding="16dp">
 
         <TextView
             android:id="@+id/tvNumber"
@@ -96,13 +18,21 @@
             android:layout_height="wrap_content"
             android:gravity="center"
             android:hint="Enter number"
-            android:textColorHint="#555555"
-            android:textColor="@android:color/white"
+            android:textColorHint="?android:attr/textColorHint"
+            android:textColor="?android:attr/textColorPrimary"
             android:textSize="36sp"
             android:singleLine="true"
             android:ellipsize="start"
             android:padding="8dp"/>
     </LinearLayout>
+
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/rvContactSuggestions"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_below="@id/displayArea"
+        android:visibility="gone"
+        android:maxHeight="200dp"/>
 
     <GridLayout
         android:id="@+id/dialerGrid"

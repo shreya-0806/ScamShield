@@ -116,8 +116,10 @@ for folder, size in [('mipmap-mdpi',48), ('mipmap-hdpi',72), ('mipmap-xhdpi',96)
 
 ## UI Changes Made
 - Home renamed to "Dialer" in bottom navigation
-- System status panel (scam protection + Vosk model status) moved to Settings
-- Dark mode toggle now applies theme immediately with activity recreate
-- News now shows images, title, description with "Read More" button
+- System status panel moved to Settings only
+- Dark mode toggle removed (app uses default dark theme)
+- News now shows images, title, description with "Read More" button (only button opens news)
 - Contacts now have: star (favorite - gold when active), block (red when blocked, toggle unblock), delete button
-- Call history now shows time only, cleaner Google Dialer style
+- Call history shows time only, Google Dialer style
+- Dialer shows contact suggestions when typing numbers with quick call button
+- App now uses pure dark theme (#121212 background)

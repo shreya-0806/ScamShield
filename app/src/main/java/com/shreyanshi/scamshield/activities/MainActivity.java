@@ -11,7 +11,6 @@ import android.util.Log;
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
-import androidx.appcompat.app.AppCompatDelegate;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 import androidx.fragment.app.Fragment;
@@ -30,8 +29,6 @@ public class MainActivity extends AppCompatActivity {
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
-        applyDarkModeSetting();
-        
         super.onCreate(savedInstanceState);
 
         checkCrashLogs();
@@ -91,14 +88,6 @@ public class MainActivity extends AppCompatActivity {
         } catch (Exception e) {
             Log.e("MainActivity", "Error loading fragment: " + fqcn, e);
         }
-    }
-
-    private void applyDarkModeSetting() {
-        SharedPreferences prefs = getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
-        boolean darkModeEnabled = prefs.getBoolean("dark_mode_enabled", false);
-        AppCompatDelegate.setDefaultNightMode(
-                darkModeEnabled ? AppCompatDelegate.MODE_NIGHT_YES : AppCompatDelegate.MODE_NIGHT_NO
-        );
     }
 
     private void checkCrashLogs() {

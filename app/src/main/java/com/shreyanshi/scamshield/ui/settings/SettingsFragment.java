@@ -38,7 +38,6 @@ public class SettingsFragment extends Fragment {
     private static final String KEY_VIBRATION = "vibration_enabled";
 
     private SwitchCompat switchScamAlerts;
-    private SwitchCompat switchDarkMode;
     private SwitchCompat switchSounds;
     private SwitchCompat switchVibration;
     private ActivityResultLauncher<String[]> permissionLauncher;
@@ -74,7 +73,6 @@ public class SettingsFragment extends Fragment {
         SharedPreferences prefs = requireActivity().getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
 
         switchScamAlerts = view.findViewById(R.id.switchScamAlerts);
-        switchDarkMode = view.findViewById(R.id.switchDarkMode);
         switchSounds = view.findViewById(R.id.switchSounds);
         switchVibration = view.findViewById(R.id.switchVibration);
         View permissionWarning = view.findViewById(R.id.permissionWarning);
@@ -96,17 +94,6 @@ public class SettingsFragment extends Fragment {
                     prefs.edit().putBoolean(KEY_SCAM_ALERTS, false).apply();
                     Toast.makeText(requireContext(), "Scam detection disabled", Toast.LENGTH_SHORT).show();
                 }
-            });
-        }
-
-        if (switchDarkMode != null) {
-            switchDarkMode.setChecked(prefs.getBoolean(KEY_DARK_MODE, false));
-            switchDarkMode.setOnCheckedChangeListener((buttonView, isChecked) -> {
-                prefs.edit().putBoolean(KEY_DARK_MODE, isChecked).apply();
-                AppCompatDelegate.setDefaultNightMode(
-                        isChecked ? AppCompatDelegate.MODE_NIGHT_YES : AppCompatDelegate.MODE_NIGHT_NO
-                );
-                requireActivity().recreate();
             });
         }
 
@@ -237,8 +224,8 @@ public class SettingsFragment extends Fragment {
         tvStatusProtection.setText(protectionEnabled ? "ACTIVE" : "INACTIVE");
         tvStatusProtection.setTextColor(protectionEnabled ? 0xFF4CAF50 : 0xFFF44336);
 
-        File modelDir = new File(context.getFilesDir(), "vosk-model-small-en-in");
-        File altModelDir = new File(context.getFilesDir(), "vosk-model");
+        File modelDir = new File(context.getFilesDir(), "vosk-model");
+        File altModelDir = new File(context.getFilesDir(), "vosk-model-small-en-in");
         boolean modelExists = modelDir.exists() || altModelDir.exists();
         tvStatusVosk.setText(modelExists ? "READY" : "LOADING...");
         tvStatusVosk.setTextColor(modelExists ? 0xFF4CAF50 : 0xFFFF9800);

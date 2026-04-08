@@ -4,13 +4,10 @@
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:layout_marginBottom="12dp"
-    app:cardBackgroundColor="#1E1E1E"
+    app:cardBackgroundColor="?android:attr/colorBackground"
     app:cardCornerRadius="12dp"
-    app:strokeColor="#333333"
-    app:strokeWidth="1dp"
-    android:clickable="true"
-    android:focusable="true"
-    android:foreground="?attr/selectableItemBackground">
+    app:strokeColor="?android:attr/textColorSecondary"
+    app:strokeWidth="1dp">
 
     <LinearLayout
         android:layout_width="match_parent"
@@ -37,7 +34,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:text="News Title"
-                android:textColor="#FFFFFF"
+                android:textColor="?android:attr/textColorPrimary"
                 android:textSize="18sp"
                 android:textStyle="bold"
                 android:maxLines="3"
@@ -49,7 +46,7 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="8dp"
                 android:text="News description goes here..."
-                android:textColor="#AAAAAA"
+                android:textColor="?android:attr/textColorSecondary"
                 android:textSize="14sp"
                 android:maxLines="4"
                 android:ellipsize="end"/>
@@ -67,7 +64,7 @@
                     android:layout_weight="1"
                     android:layout_height="wrap_content"
                     android:text="01 Jan 2024"
-                    android:textColor="#666666"
+                    android:textColor="?android:attr/textColorSecondary"
                     android:textSize="12sp"/>
 
                 <com.google.android.material.button.MaterialButton

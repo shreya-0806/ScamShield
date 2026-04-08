@@ -2,17 +2,18 @@
 <resources xmlns:tools="http://schemas.android.com/tools">
 
     <style name="Theme.ScamShield"
-        parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        parent="Theme.MaterialComponents.NoActionBar">
 
-        <item name="android:statusBarColor">@android:color/black</item>
-        <item name="android:navigationBarColor">@android:color/black</item>
-        <item name="colorPrimary">#2196F3</item>
-        <item name="colorPrimaryDark">#1976D2</item>
+        <item name="android:statusBarColor">#121212</item>
+        <item name="android:navigationBarColor">#121212</item>
+        <item name="colorPrimary">#4CAF50</item>
+        <item name="colorPrimaryDark">#388E3C</item>
         <item name="colorAccent">#FF4081</item>
+        <item name="android:colorBackground">#121212</item>
+        <item name="android:windowBackground">#121212</item>
 
     </style>
 
-    <!-- Dial Pad Button Style -->
     <style name="DialButton" parent="Widget.MaterialComponents.Button.TextButton">
         <item name="android:layout_width">0dp</item>
         <item name="android:layout_height">80dp</item>
@@ -28,6 +29,5 @@
     <style name="ShapeAppearanceOverlay.App.Button.Circle" parent="">
         <item name="cornerSize">50%</item>
     </style>
-
 
 </resources>

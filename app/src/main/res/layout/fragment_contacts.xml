@@ -31,4 +31,15 @@
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:layout_marginTop="8dp"/>
+
+    <TextView
+        android:id="@+id/tvContactsEmpty"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center"
+        android:padding="32dp"
+        android:text="No contacts found"
+        android:textColor="?android:attr/textColorSecondary"
+        android:textSize="16sp"
+        android:visibility="gone"/>
 </LinearLayout>
