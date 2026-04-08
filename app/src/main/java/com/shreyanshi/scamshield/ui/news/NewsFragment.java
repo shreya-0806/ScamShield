@@ -152,7 +152,9 @@ public class NewsFragment extends Fragment {
                         }
                     } catch (Exception ignored) {}
                     
-                    items.add(new NewsItem(title, description, link, date));
+                    String imageUrl = extractImageFromEntry(entry);
+                    
+                    items.add(new NewsItem(title, description, link, date, imageUrl));
                 }
             }
         } catch (Exception e) {
@@ -175,6 +177,29 @@ public class NewsFragment extends Fragment {
         
         return xml.substring(endStart + 1, end).trim();
     }
+    
+    private String extractImageFromEntry(String entry) {
+        String imageUrl = "";
+        int mediaStart = entry.indexOf("<media:content");
+        if (mediaStart == -1) mediaStart = entry.indexOf("<media:thumbnail");
+        if (mediaStart == -1) mediaStart = entry.indexOf("<enclosure");
+        
+        if (mediaStart != -1) {
+            String urlStart = "url=\"";
+            int urlIdx = entry.indexOf(urlStart, mediaStart);
+            if (urlIdx == -1) urlStart = "url='";
+            urlIdx = entry.indexOf(urlStart, mediaStart);
+            if (urlIdx != -1) {
+                urlIdx += urlStart.length();
+                int urlEnd = entry.indexOf("\"", urlIdx);
+                if (urlEnd == -1) urlEnd = entry.indexOf("'", urlIdx);
+                if (urlEnd != -1) {
+                    imageUrl = entry.substring(urlIdx, urlEnd);
+                }
+            }
+        }
+        return imageUrl;
+    }
 
     private List<NewsItem> getDefaultScamNews() {
         List<NewsItem> items = new ArrayList<>();
@@ -183,21 +208,24 @@ public class NewsFragment extends Fragment {
             "OTP Scam Alert: Banks Warn Customers About New Fraud Tactics",
             "Be aware of calls asking for OTP. Banks never ask for OTP over phone.",
             "https://example.com/otp-scam",
-            new SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(new Date())
+            new SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(new Date()),
+            ""
         ));
         
         items.add(new NewsItem(
             "KYC Scam: How Fraudsters Are Targeting Bank Customers",
             "Fraudsters are calling customers claiming their account will be blocked unless KYC is updated.",
             "https://example.com/kyc-scam",
-            new SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(new Date())
+            new SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(new Date()),
+            ""
         ));
         
         items.add(new NewsItem(
             "UPI Fraud: 5 Ways Scammers Are Stealing Money Through UPI",
             "Learn about common UPI scams and how to protect yourself.",
             "https://example.com/upi-fraud",
-            new SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(new Date())
+            new SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(new Date()),
+            ""
         ));
         
         return items;
@@ -227,12 +255,14 @@ public class NewsFragment extends Fragment {
         public String description;
         public String url;
         public String date;
+        public String imageUrl;
 
         public NewsItem(String title, String description, String url, String date) {
             this.title = title;
             this.description = description;
             this.url = url;
             this.date = date;
+            this.imageUrl = "";
         }
     }
 }

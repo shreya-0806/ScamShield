@@ -5,7 +5,7 @@
     android:layout_height="wrap_content"
     android:layout_marginBottom="12dp"
     app:cardBackgroundColor="#1E1E1E"
-    app:cardCornerRadius="8dp"
+    app:cardCornerRadius="12dp"
     app:strokeColor="#333333"
     app:strokeWidth="1dp"
     android:clickable="true"
@@ -15,54 +15,72 @@
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:padding="16dp">
+        android:orientation="vertical">
 
-        <TextView
-            android:id="@+id/tvNewsTitle"
+        <ImageView
+            android:id="@+id/ivNewsImage"
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="News Title"
-            android:textColor="#FFFFFF"
-            android:textSize="16sp"
-            android:textStyle="bold"
-            android:maxLines="2"
-            android:ellipsize="end"/>
-
-        <TextView
-            android:id="@+id/tvNewsDescription"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:text="News description goes here..."
-            android:textColor="#AAAAAA"
-            android:textSize="14sp"
-            android:maxLines="3"
-            android:ellipsize="end"/>
+            android:layout_height="180dp"
+            android:scaleType="centerCrop"
+            android:visibility="gone"
+            android:background="#2A2A2A"
+            android:contentDescription="News image"/>
 
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:orientation="horizontal"
-            android:gravity="center_vertical">
+            android:orientation="vertical"
+            android:padding="16dp">
 
             <TextView
-                android:id="@+id/tvNewsDate"
-                android:layout_width="0dp"
-                android:layout_weight="1"
+                android:id="@+id/tvNewsTitle"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="01 Jan 2024"
-                android:textColor="#666666"
-                android:textSize="12sp"/>
+                android:text="News Title"
+                android:textColor="#FFFFFF"
+                android:textSize="18sp"
+                android:textStyle="bold"
+                android:maxLines="3"
+                android:ellipsize="end"/>
 
             <TextView
-                android:layout_width="wrap_content"
+                android:id="@+id/tvNewsDescription"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="Read More →"
-                android:textColor="#4CAF50"
-                android:textSize="12sp"
-                android:textStyle="bold"/>
+                android:layout_marginTop="8dp"
+                android:text="News description goes here..."
+                android:textColor="#AAAAAA"
+                android:textSize="14sp"
+                android:maxLines="4"
+                android:ellipsize="end"/>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
+
+                <TextView
+                    android:id="@+id/tvNewsDate"
+                    android:layout_width="0dp"
+                    android:layout_weight="1"
+                    android:layout_height="wrap_content"
+                    android:text="01 Jan 2024"
+                    android:textColor="#666666"
+                    android:textSize="12sp"/>
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/tvReadMore"
+                    android:layout_width="wrap_content"
+                    android:layout_height="36dp"
+                    android:text="Read More"
+                    android:textSize="12sp"
+                    app:backgroundTint="#4CAF50"
+                    app:cornerRadius="18dp"
+                    android:textAllCaps="false"/>
+
+            </LinearLayout>
 
         </LinearLayout>
 

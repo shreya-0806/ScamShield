@@ -27,6 +27,8 @@ import androidx.fragment.app.Fragment;
 
 import com.shreyanshi.scamshield.R;
 
+import java.io.File;
+
 public class SettingsFragment extends Fragment {
 
     private static final String PREF_NAME = "ScamShieldPrefs";
@@ -36,6 +38,9 @@ public class SettingsFragment extends Fragment {
     private static final String KEY_VIBRATION = "vibration_enabled";
 
     private SwitchCompat switchScamAlerts;
+    private SwitchCompat switchDarkMode;
+    private SwitchCompat switchSounds;
+    private SwitchCompat switchVibration;
     private ActivityResultLauncher<String[]> permissionLauncher;
 
     @Override
@@ -69,10 +74,13 @@ public class SettingsFragment extends Fragment {
         SharedPreferences prefs = requireActivity().getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
 
         switchScamAlerts = view.findViewById(R.id.switchScamAlerts);
-        SwitchCompat switchDarkMode = view.findViewById(R.id.switchDarkMode);
-        SwitchCompat switchSounds = view.findViewById(R.id.switchSounds);
-        SwitchCompat switchVibration = view.findViewById(R.id.switchVibration);
+        switchDarkMode = view.findViewById(R.id.switchDarkMode);
+        switchSounds = view.findViewById(R.id.switchSounds);
+        switchVibration = view.findViewById(R.id.switchVibration);
         View permissionWarning = view.findViewById(R.id.permissionWarning);
+        
+        TextView tvStatusProtection = view.findViewById(R.id.tvStatusProtection);
+        TextView tvStatusVosk = view.findViewById(R.id.tvStatusVosk);
         Button btnAppPermissions = view.findViewById(R.id.btnAppPermissions);
         Button btnHelpFeedback = view.findViewById(R.id.btnHelpFeedback);
         Button btnPrivacyConsent = view.findViewById(R.id.btnPrivacyConsent);
@@ -98,6 +106,7 @@ public class SettingsFragment extends Fragment {
                 AppCompatDelegate.setDefaultNightMode(
                         isChecked ? AppCompatDelegate.MODE_NIGHT_YES : AppCompatDelegate.MODE_NIGHT_NO
                 );
+                requireActivity().recreate();
             });
         }
 
@@ -205,5 +214,33 @@ public class SettingsFragment extends Fragment {
         intent.setData(uri);
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         startActivity(intent);
+    }
+
+    @Override
+    public void onResume() {
+        super.onResume();
+        updateStatusPanel();
+    }
+
+    private void updateStatusPanel() {
+        View view = getView();
+        if (view == null) return;
+        
+        TextView tvStatusProtection = view.findViewById(R.id.tvStatusProtection);
+        TextView tvStatusVosk = view.findViewById(R.id.tvStatusVosk);
+        
+        if (tvStatusProtection == null || tvStatusVosk == null) return;
+        
+        Context context = requireContext();
+        SharedPreferences prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
+        boolean protectionEnabled = prefs.getBoolean(KEY_SCAM_ALERTS, true);
+        tvStatusProtection.setText(protectionEnabled ? "ACTIVE" : "INACTIVE");
+        tvStatusProtection.setTextColor(protectionEnabled ? 0xFF4CAF50 : 0xFFF44336);
+
+        File modelDir = new File(context.getFilesDir(), "vosk-model-small-en-in");
+        File altModelDir = new File(context.getFilesDir(), "vosk-model");
+        boolean modelExists = modelDir.exists() || altModelDir.exists();
+        tvStatusVosk.setText(modelExists ? "READY" : "LOADING...");
+        tvStatusVosk.setTextColor(modelExists ? 0xFF4CAF50 : 0xFFFF9800);
     }
 }

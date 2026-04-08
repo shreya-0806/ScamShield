@@ -18,6 +18,7 @@ import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
 import com.shreyanshi.scamshield.R;
+import com.shreyanshi.scamshield.database.BlockedNumberDatabase;
 
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -28,6 +29,7 @@ public class ContactsFragment extends Fragment {
 
     private ContactsAdapter adapter;
     private List<ContactModel> contactList = new ArrayList<>();
+    private BlockedNumberDatabase blockedDb;
 
     @Nullable
     @Override
@@ -41,14 +43,15 @@ public class ContactsFragment extends Fragment {
         RecyclerView recyclerView = view.findViewById(R.id.recyclerContacts);
         SearchView searchView = view.findViewById(R.id.searchViewContacts);
         
+        blockedDb = new BlockedNumberDatabase(requireContext());
+        
         recyclerView.setLayoutManager(new LinearLayoutManager(getContext()));
 
         loadContacts();
 
-        adapter = new ContactsAdapter(contactList);
+        adapter = new ContactsAdapter(contactList, blockedDb);
         recyclerView.setAdapter(adapter);
 
-        // Setup Search Functionality
         searchView.setOnQueryTextListener(new SearchView.OnQueryTextListener() {
             @Override
             public boolean onQueryTextSubmit(String query) {
@@ -88,15 +91,26 @@ public class ContactsFragment extends Fragment {
                             cursor.getColumnIndexOrThrow(
                                     ContactsContract.CommonDataKinds.Phone.NUMBER));
 
-                    // Normalize number by keeping only digits to dedupe
                     String normalized = number.replaceAll("\\D+", "");
                     if (normalized.isEmpty() || seenNumbers.contains(normalized)) continue;
                     seenNumbers.add(normalized);
 
-                    contactList.add(new ContactModel(name, number));
+                    ContactModel contact = new ContactModel(name, number);
+                    if (blockedDb != null) {
+                        contact.setBlocked(blockedDb.isBlocked(number));
+                    }
+                    contactList.add(contact);
                 }
                 cursor.close();
             }
+        }
+    }
+    
+    @Override
+    public void onDestroyView() {
+        super.onDestroyView();
+        if (blockedDb != null) {
+            blockedDb.close();
         }
     }
 }

@@ -154,8 +154,8 @@ public class HomeFragment extends Fragment {
         tvStatusProtection.setText(protectionEnabled ? "ACTIVE" : "INACTIVE");
         tvStatusProtection.setTextColor(protectionEnabled ? 0xFF4CAF50 : 0xFFF44336);
 
-        File modelDir = new File(context.getFilesDir(), "vosk-model-small-en-in");
-        File altModelDir = new File(context.getFilesDir(), "vosk-model");
+        File modelDir = new File(context.getFilesDir(), "vosk-model");
+        File altModelDir = new File(context.getFilesDir(), "vosk-model-small-en-in");
         boolean modelExists = modelDir.exists() || altModelDir.exists();
         tvStatusVosk.setText(modelExists ? "READY" : "LOADING...");
         tvStatusVosk.setTextColor(modelExists ? 0xFF4CAF50 : 0xFFFF9800);

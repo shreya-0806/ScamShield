@@ -29,8 +29,8 @@ public class VoskProcessor implements SpeechProcessor, RecognitionListener {
     private final ExecutorService executorService = Executors.newSingleThreadExecutor();
     private final AtomicBoolean modelLoading = new AtomicBoolean(false);
 
-    private static final String MODEL_PATH_KEY = "vosk-model-small-en-in";
-    private static final String MODEL_DIR_NAME = "vosk-model-small-en-in";
+    private static final String MODEL_PATH_KEY = "vosk-model";
+    private static final String MODEL_DIR_NAME = "vosk-model";
     private static final String TAG = "ScamShield-Vosk";
 
     public VoskProcessor(Context context, SpeechListener listener) {

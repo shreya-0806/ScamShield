@@ -1,7 +1,9 @@
 package com.shreyanshi.scamshield.ui.contacts;
 
+import android.app.AlertDialog;
 import android.content.ContentUris;
 import android.content.Context;
+import android.content.DialogInterface;
 import android.content.Intent;
 import android.database.Cursor;
 import android.net.Uri;
@@ -9,6 +11,7 @@ import android.provider.ContactsContract;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.ImageButton;
 import android.widget.ImageView;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -17,6 +20,7 @@ import androidx.annotation.NonNull;
 import androidx.recyclerview.widget.RecyclerView;
 
 import com.shreyanshi.scamshield.R;
+import com.shreyanshi.scamshield.database.BlockedNumberDatabase;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -25,10 +29,12 @@ public class ContactsAdapter extends RecyclerView.Adapter<ContactsAdapter.ViewHo
 
     private List<ContactModel> contacts;
     private List<ContactModel> contactsFull;
+    private BlockedNumberDatabase blockedDb;
 
-    public ContactsAdapter(List<ContactModel> contacts) {
+    public ContactsAdapter(List<ContactModel> contacts, BlockedNumberDatabase blockedDb) {
         this.contacts = contacts;
         this.contactsFull = new ArrayList<>(contacts);
+        this.blockedDb = blockedDb;
     }
 
     @NonNull
@@ -52,11 +58,20 @@ public class ContactsAdapter extends RecyclerView.Adapter<ContactsAdapter.ViewHo
             holder.tvInitial.setText("?");
         }
 
-        // Toggle Favorite Icon
         if (model.isFavorite()) {
             holder.btnStar.setImageResource(android.R.drawable.btn_star_big_on);
+            holder.btnStar.setColorFilter(0xFFFFD700);
         } else {
             holder.btnStar.setImageResource(android.R.drawable.btn_star_big_off);
+            holder.btnStar.setColorFilter(0xFF757575);
+        }
+
+        if (model.isBlocked()) {
+            holder.btnBlock.setImageResource(R.drawable.ic_blocked);
+            holder.btnBlock.setColorFilter(0xFFF44336);
+        } else {
+            holder.btnBlock.setImageResource(R.drawable.ic_block);
+            holder.btnBlock.setColorFilter(0xFF757575);
         }
 
         holder.itemView.setOnClickListener(v -> {
@@ -65,27 +80,36 @@ public class ContactsAdapter extends RecyclerView.Adapter<ContactsAdapter.ViewHo
             v.getContext().startActivity(intent);
         });
 
-        holder.btnEdit.setOnClickListener(v -> {
-            long contactId = getContactId(v.getContext(), model.getNumber());
-            if (contactId != -1) {
-                Intent intent = new Intent(Intent.ACTION_EDIT);
-                Uri contactUri = ContentUris.withAppendedId(ContactsContract.Contacts.CONTENT_URI, contactId);
-                intent.setData(contactUri);
-                v.getContext().startActivity(intent);
-            } else {
-                Toast.makeText(v.getContext(), "Contact not found in phonebook", Toast.LENGTH_SHORT).show();
-            }
-        });
+        holder.btnEdit.setVisibility(View.GONE);
 
         holder.btnBlock.setOnClickListener(v -> {
-            Toast.makeText(v.getContext(), model.getName() + " added to block list", Toast.LENGTH_SHORT).show();
+            boolean currentlyBlocked = model.isBlocked();
+            if (currentlyBlocked) {
+                blockedDb.unblockNumber(model.getNumber());
+                model.setBlocked(false);
+                holder.btnBlock.setImageResource(R.drawable.ic_block);
+                holder.btnBlock.setColorFilter(0xFF757575);
+                Toast.makeText(v.getContext(), model.getName() + " unblocked", Toast.LENGTH_SHORT).show();
+            } else {
+                new AlertDialog.Builder(v.getContext())
+                    .setTitle("Block Contact")
+                    .setMessage("Block " + model.getName() + "? You will not receive calls from this number.")
+                    .setPositiveButton("Block", (d, w) -> {
+                        blockedDb.blockNumber(model.getNumber());
+                        model.setBlocked(true);
+                        holder.btnBlock.setImageResource(R.drawable.ic_blocked);
+                        holder.btnBlock.setColorFilter(0xFFF44336);
+                        Toast.makeText(v.getContext(), model.getName() + " blocked", Toast.LENGTH_SHORT).show();
+                    })
+                    .setNegativeButton("Cancel", null)
+                    .show();
+            }
         });
 
         holder.btnStar.setOnClickListener(v -> {
             boolean newState = !model.isFavorite();
             model.setFavorite(newState);
             
-            // Also update in contactsFull if they are different references
             for (ContactModel m : contactsFull) {
                 if (m.getNumber().equals(model.getNumber())) {
                     m.setFavorite(newState);
@@ -93,8 +117,29 @@ public class ContactsAdapter extends RecyclerView.Adapter<ContactsAdapter.ViewHo
                 }
             }
             
-            notifyItemChanged(position);
-            Toast.makeText(v.getContext(), newState ? "Marked as Favorite" : "Removed from Favorites", Toast.LENGTH_SHORT).show();
+            if (newState) {
+                holder.btnStar.setImageResource(android.R.drawable.btn_star_big_on);
+                holder.btnStar.setColorFilter(0xFFFFD700);
+            } else {
+                holder.btnStar.setImageResource(android.R.drawable.btn_star_big_off);
+                holder.btnStar.setColorFilter(0xFF757575);
+            }
+            Toast.makeText(v.getContext(), newState ? "Added to favorites" : "Removed from favorites", Toast.LENGTH_SHORT).show();
+        });
+
+        holder.btnDelete.setOnClickListener(v -> {
+            new AlertDialog.Builder(v.getContext())
+                .setTitle("Delete Contact")
+                .setMessage("Delete " + model.getName() + " from call history?")
+                .setPositiveButton("Delete", (d, w) -> {
+                    contacts.remove(position);
+                    contactsFull.remove(model);
+                    notifyItemRemoved(position);
+                    notifyItemRangeChanged(position, contacts.size());
+                    Toast.makeText(v.getContext(), "Contact deleted", Toast.LENGTH_SHORT).show();
+                })
+                .setNegativeButton("Cancel", null)
+                .show();
         });
     }
 
@@ -137,6 +182,7 @@ public class ContactsAdapter extends RecyclerView.Adapter<ContactsAdapter.ViewHo
     static class ViewHolder extends RecyclerView.ViewHolder {
         TextView tvName, tvNumber, tvInitial;
         ImageView btnEdit, btnBlock, btnStar;
+        ImageButton btnDelete;
         ViewHolder(@NonNull View itemView) {
             super(itemView);
             tvName = itemView.findViewById(R.id.tvName);
@@ -145,6 +191,7 @@ public class ContactsAdapter extends RecyclerView.Adapter<ContactsAdapter.ViewHo
             btnEdit = itemView.findViewById(R.id.btnEdit);
             btnBlock = itemView.findViewById(R.id.btnBlock);
             btnStar = itemView.findViewById(R.id.btnStar);
+            btnDelete = itemView.findViewById(R.id.btnDelete);
         }
     }
 }

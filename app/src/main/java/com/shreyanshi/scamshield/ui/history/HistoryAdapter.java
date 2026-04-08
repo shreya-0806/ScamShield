@@ -5,6 +5,7 @@ import android.net.Uri;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.ImageButton;
 import android.widget.ImageView;
 import android.widget.TextView;
 
@@ -13,7 +14,10 @@ import androidx.recyclerview.widget.RecyclerView;
 
 import com.shreyanshi.scamshield.R;
 
+import java.text.SimpleDateFormat;
+import java.util.Date;
 import java.util.List;
+import java.util.Locale;
 
 public class HistoryAdapter extends RecyclerView.Adapter<HistoryAdapter.ViewHolder> {
 
@@ -35,9 +39,22 @@ public class HistoryAdapter extends RecyclerView.Adapter<HistoryAdapter.ViewHold
     public void onBindViewHolder(@NonNull ViewHolder holder, int position) {
         CallLogModel model = callLogs.get(position);
 
-        holder.tvName.setText(model.getName());
+        holder.tvName.setText(model.getName() != null ? model.getName() : model.getNumber());
         holder.tvNumber.setText(model.getNumber());
-        holder.tvDate.setText(model.getDateTime());
+        
+        String dateTime = model.getDateTime();
+        try {
+            SimpleDateFormat inputFormat = new SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.getDefault());
+            Date date = inputFormat.parse(dateTime);
+            if (date != null) {
+                SimpleDateFormat timeFormat = new SimpleDateFormat("hh:mm a", Locale.getDefault());
+                holder.tvDate.setText(timeFormat.format(date));
+            } else {
+                holder.tvDate.setText(dateTime);
+            }
+        } catch (Exception e) {
+            holder.tvDate.setText(dateTime);
+        }
 
         int iconRes;
         int iconTint;
@@ -70,6 +87,12 @@ public class HistoryAdapter extends RecyclerView.Adapter<HistoryAdapter.ViewHold
             intent.setData(Uri.parse("tel:" + model.getNumber()));
             v.getContext().startActivity(intent);
         });
+        
+        holder.btnCall.setOnClickListener(v -> {
+            Intent intent = new Intent(Intent.ACTION_DIAL);
+            intent.setData(Uri.parse("tel:" + model.getNumber()));
+            v.getContext().startActivity(intent);
+        });
     }
 
     @Override
@@ -80,6 +103,7 @@ public class HistoryAdapter extends RecyclerView.Adapter<HistoryAdapter.ViewHold
     static class ViewHolder extends RecyclerView.ViewHolder {
         TextView tvName, tvNumber, tvDate, tvScamIndicator;
         ImageView ivCallType;
+        ImageButton btnCall;
 
         public ViewHolder(@NonNull View itemView) {
             super(itemView);
@@ -88,6 +112,7 @@ public class HistoryAdapter extends RecyclerView.Adapter<HistoryAdapter.ViewHold
             tvDate = itemView.findViewById(R.id.tvCallDate);
             tvScamIndicator = itemView.findViewById(R.id.tvScamIndicator);
             ivCallType = itemView.findViewById(R.id.ivCallType);
+            btnCall = itemView.findViewById(R.id.btnCallHistory);
         }
     }
 }
