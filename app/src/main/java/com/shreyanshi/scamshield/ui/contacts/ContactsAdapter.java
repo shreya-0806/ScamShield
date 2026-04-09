@@ -181,8 +181,7 @@ public class ContactsAdapter extends RecyclerView.Adapter<ContactsAdapter.ViewHo
 
     static class ViewHolder extends RecyclerView.ViewHolder {
         TextView tvName, tvNumber, tvInitial;
-        ImageView btnEdit, btnBlock, btnStar;
-        ImageButton btnDelete;
+        ImageView btnEdit, btnBlock, btnStar, btnDelete;
         ViewHolder(@NonNull View itemView) {
             super(itemView);
             tvName = itemView.findViewById(R.id.tvName);

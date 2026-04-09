@@ -135,22 +135,34 @@ public class HomeFragment extends Fragment {
         List<ContactSuggestionAdapter.ContactInfo> suggestions = new ArrayList<>();
         String normalizedQuery = query.replaceAll("\\D+", "");
         
-        Cursor cursor = getContext().getContentResolver().query(
-                ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
-                null,
-                "display_name LIKE ? OR phone LIKE ?",
-                new String[]{"%" + query + "%", "%" + normalizedQuery + "%"},
-                "display_name ASC");
+        try {
+            Cursor cursor = getContext().getContentResolver().query(
+                    ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
+                    null,
+                    ContactsContract.Contacts.DISPLAY_NAME_PRIMARY + " LIKE ? OR " 
+                    + ContactsContract.CommonDataKinds.Phone.NUMBER + " LIKE ?",
+                    new String[]{"%" + query + "%", "%" + normalizedQuery + "%"},
+                    ContactsContract.Contacts.DISPLAY_NAME_PRIMARY + " ASC");
 
-        if (cursor != null) {
-            int count = 0;
-            while (cursor.moveToNext() && count < 5) {
-                String name = cursor.getString(cursor.getColumnIndexOrThrow(ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME));
-                String number = cursor.getString(cursor.getColumnIndexOrThrow(ContactsContract.CommonDataKinds.Phone.NUMBER));
-                suggestions.add(new ContactSuggestionAdapter.ContactInfo(name, number));
-                count++;
+            if (cursor != null) {
+                int count = 0;
+                while (cursor.moveToNext() && count < 5) {
+                    try {
+                        String name = cursor.getString(cursor.getColumnIndexOrThrow(ContactsContract.Contacts.DISPLAY_NAME_PRIMARY));
+                        String number = cursor.getString(cursor.getColumnIndexOrThrow(ContactsContract.CommonDataKinds.Phone.NUMBER));
+                        if (name == null || name.isEmpty()) {
+                            name = number;
+                        }
+                        suggestions.add(new ContactSuggestionAdapter.ContactInfo(name, number));
+                        count++;
+                    } catch (Exception e) {
+                        // Skip malformed contacts
+                    }
+                }
+                cursor.close();
             }
-            cursor.close();
+        } catch (Exception e) {
+            e.printStackTrace();
         }
 
         if (suggestions.isEmpty()) {

@@ -90,31 +90,36 @@ public class ScamMonitorService extends Service implements SpeechListener {
         if (!isServiceRunning) {
             isServiceRunning = true;
             startForegroundWithNotification();
-            initializeSpeechRecognition();
         }
+        
+        initializeSpeechRecognition();
         
         return START_STICKY;
     }
 
     private void startForegroundWithNotification() {
-        createNotificationChannel();
+        try {
+            createNotificationChannel();
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to create notification channel: " + e.getMessage());
+        }
 
         Intent notificationIntent = new Intent(this, MainActivity.class);
         PendingIntent pendingIntent = PendingIntent.getActivity(
                 this, 0, notificationIntent,
                 PendingIntent.FLAG_IMMUTABLE);
 
-        Notification notification = new NotificationCompat.Builder(this, CHANNEL_ID)
-                .setContentTitle("ScamShield Active")
-                .setContentText("Monitoring calls for scam attempts")
-                .setSmallIcon(android.R.drawable.ic_btn_speak_now)
-                .setPriority(NotificationCompat.PRIORITY_LOW)
-                .setOngoing(true)
-                .setCategory(NotificationCompat.CATEGORY_SERVICE)
-                .setContentIntent(pendingIntent)
-                .build();
-
         try {
+            Notification notification = new NotificationCompat.Builder(this, CHANNEL_ID)
+                    .setContentTitle("ScamShield Active")
+                    .setContentText("Monitoring calls for scam attempts")
+                    .setSmallIcon(R.drawable.ic_notification)
+                    .setPriority(NotificationCompat.PRIORITY_LOW)
+                    .setOngoing(true)
+                    .setCategory(NotificationCompat.CATEGORY_SERVICE)
+                    .setContentIntent(pendingIntent)
+                    .build();
+
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE);
             } else {
@@ -122,7 +127,7 @@ public class ScamMonitorService extends Service implements SpeechListener {
             }
             Log.d(TAG, "startForeground successful");
         } catch (Exception e) {
-            Log.e(TAG, "startForeground failed: " + e.getMessage());
+            Log.e(TAG, "startForeground failed: " + e.getMessage(), e);
         }
     }
 

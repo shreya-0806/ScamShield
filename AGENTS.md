@@ -123,3 +123,7 @@ for folder, size in [('mipmap-mdpi',48), ('mipmap-hdpi',72), ('mipmap-xhdpi',96)
 - Call history shows time only, Google Dialer style
 - Dialer shows contact suggestions when typing numbers with quick call button
 - App now uses pure dark theme (#121212 background)
+
+## Bug Fixes
+- Fixed SQLiteException in HomeFragment search (using correct column names from ContactsContract)
+- Fixed ClassCastException in ContactsAdapter (ImageView vs ImageButton type mismatch)
