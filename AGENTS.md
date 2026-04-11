@@ -1065,6 +1065,641 @@ private void showScamAlert(String keywords) {
 - **Solution:** Implement 30-second debounce in triggerAlert()
 - Check lastAlertTime logic: now - lastAlertTime < ALERT_DEBOUNCE_MS
 
+## Background Lifecycle & Debugging Architecture
+
+### Overview
+ScamShield implements continuous background speech recognition that persists across app lifecycle changes. The architecture ensures the listening loop never stops indefinitely, with automatic restart mechanisms in both error and success scenarios. In-app debug logging provides real-time visibility into speech recognition events and helps diagnose why scam detection might appear to "silently fail."
+
+### Auto-Restart Listening Pattern
+
+**Key Principle:** SpeechRecognizer must be restarted immediately after `onResults()` or `onError()` to maintain continuous monitoring. The original Google Speech API times out after ~60 seconds, so auto-restart is mandatory.
+
+**Location:** `GoogleSpeechRecognizer.java`
+
+```java
+// Auto-restart timing constants
+private static final long AUTO_RESTART_DELAY_MS = 1000;        // 1 second for transient errors
+private static final long AUTO_RESTART_LONG_DELAY_MS = 3000;   // 3 seconds for permanent errors
+private boolean isListening = false;
+private Handler handler;
+
+// Called when speech recognition completes (with or without results)
+@Override
+public void onResults(Bundle results) {
+    ArrayList<String> matches = results.getStringArrayList(
+        SpeechRecognizer.RESULTS_RECOGNITION);
+    
+    String text = "";
+    if (matches != null && !matches.isEmpty()) {
+        text = matches.get(0).trim();
+    }
+    
+    if (!text.isEmpty() && listener != null) {
+        Log.i(TAG, "✅ Final result: '" + text + "'");
+        listener.onSpeechRecognized(text);
+    } else {
+        Log.d(TAG, "⚠️  Empty final result");
+    }
+    
+    // CRITICAL: Auto-restart listening for continuous monitoring
+    isListening = false;
+    autoRestartListening();  // Restart immediately
+    Log.d(TAG, "🔄 Auto-restarting listening after onResults()");
+}
+
+// Called when speech recognition encounters an error
+@Override
+public void onError(int errorCode) {
+    String errorMsg = getErrorString(errorCode);
+    Log.e(TAG, "❌ Speech error: [" + errorCode + "] " + errorMsg);
+    
+    isListening = false;
+    
+    // Determine delay based on error type
+    long delay = AUTO_RESTART_DELAY_MS;
+    
+    if (isTransientError(errorCode)) {
+        // Transient errors: retry quickly (1 second)
+        Log.i(TAG, "🔄 Transient error detected, auto-restarting in 1 second...");
+    } else {
+        // Permanent errors: wait longer before retry (3 seconds)
+        Log.w(TAG, "⚠️  Permanent error detected, retrying in 3 seconds...");
+        delay = AUTO_RESTART_LONG_DELAY_MS;
+    }
+    
+    handler.postDelayed(this::autoRestartListening, delay);
+}
+
+// Auto-restart method: safely restart listening
+private void autoRestartListening() {
+    if (speechRecognizer == null) {
+        Log.e(TAG, "❌ SpeechRecognizer is null, cannot restart");
+        return;
+    }
+    
+    if (isListening) {
+        Log.w(TAG, "⚠️  Already listening, skipping restart");
+        return;
+    }
+    
+    try {
+        Log.i(TAG, "🎤 Starting speech recognition...");
+        speechRecognizer.startListening(recognizerIntent);
+        isListening = true;
+    } catch (Exception e) {
+        Log.e(TAG, "❌ Error starting listening: " + e.getMessage());
+        
+        // Schedule retry
+        handler.postDelayed(this::autoRestartListening, AUTO_RESTART_DELAY_MS);
+    }
+}
+
+// Determine if error is temporary (can retry quickly)
+private boolean isTransientError(int errorCode) {
+    return errorCode == SpeechRecognizer.ERROR_NETWORK_TIMEOUT
+        || errorCode == SpeechRecognizer.ERROR_AUDIO
+        || errorCode == SpeechRecognizer.ERROR_NO_MATCH
+        || errorCode == SpeechRecognizer.ERROR_SPEECH_TIMEOUT
+        || errorCode == SpeechRecognizer.ERROR_RECOGNIZER_BUSY;
+}
+
+// Get human-readable error message
+private String getErrorString(int errorCode) {
+    switch (errorCode) {
+        case SpeechRecognizer.ERROR_AUDIO: return "Audio recording error";
+        case SpeechRecognizer.ERROR_CLIENT: return "Client error";
+        case SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS: return "Insufficient permissions";
+        case SpeechRecognizer.ERROR_NETWORK: return "Network error";
+        case SpeechRecognizer.ERROR_NETWORK_TIMEOUT: return "Network timeout";
+        case SpeechRecognizer.ERROR_NO_MATCH: return "No speech input";
+        case SpeechRecognizer.ERROR_RECOGNIZER_BUSY: return "Recognizer busy";
+        case SpeechRecognizer.ERROR_SERVER: return "Server error";
+        case SpeechRecognizer.ERROR_SPEECH_TIMEOUT: return "No speech detected";
+        default: return "Unknown error";
+    }
+}
+```
+
+### Enhanced SpeechListener Interface
+
+**Purpose:** Enable bidirectional communication between GoogleSpeechRecognizer and ScamMonitorService. Allows real-time debug event broadcasting to MainActivity.
+
+**Location:** `SpeechListener.java`
+
+```java
+public interface SpeechListener {
+    /**
+     * Called when speech is recognized (from onPartialResults or onResults)
+     * @param text The recognized text (partial or final)
+     */
+    void onSpeechRecognized(String text);
+    
+    /**
+     * Called for debug/diagnostic events
+     * @param debugMessage Debug log message with emoji prefix
+     */
+    void onDebugLog(String debugMessage);
+}
+```
+
+**Usage Example:**
+```java
+// In GoogleSpeechRecognizer
+if (listener != null) {
+    listener.onDebugLog("🔄 Partial result: '" + text + "'");
+    listener.onSpeechRecognized(text);
+}
+
+// In ScamMonitorService
+@Override
+public void onDebugLog(String debugMessage) {
+    Log.d(TAG, debugMessage);
+    
+    // Broadcast to MainActivity for in-app debug log
+    if (debugListener != null) {
+        debugListener.onDebugLog(debugMessage);
+    }
+}
+```
+
+### In-App Debug Log UI
+
+**Purpose:** Show real-time speech recognition events in MainActivity for debugging why scam detection appears to fail silently.
+
+**Location:** `MainActivity.java`
+
+```java
+private TextView tvDebugLog;
+private ScrollView svDebugScroll;
+private static final int MAX_DEBUG_LINES = 20;
+
+// Initialize debug log UI
+private void initializeDebugLog() {
+    tvDebugLog = findViewById(R.id.tvDebugLog);
+    svDebugScroll = findViewById(R.id.svDebugScroll);
+    
+    // Retrieve visibility preference from SharedPreferences
+    SharedPreferences prefs = getSharedPreferences("app_prefs", MODE_PRIVATE);
+    boolean debugLogEnabled = prefs.getBoolean("debug_log_enabled", false);
+    
+    // Set initial visibility
+    int visibility = debugLogEnabled ? View.VISIBLE : View.GONE;
+    tvDebugLog.setVisibility(visibility);
+    svDebugScroll.setVisibility(visibility);
+    
+    // Style the debug log
+    tvDebugLog.setMaxLines(MAX_DEBUG_LINES);
+    tvDebugLog.setTextColor(Color.GREEN);  // #00FF00
+    tvDebugLog.setBackgroundColor(Color.BLACK);  // #000000
+    tvDebugLog.setPadding(16, 16, 16, 16);
+    tvDebugLog.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
+    tvDebugLog.setTypeface(Typeface.MONOSPACE);
+}
+
+// Add timestamped debug log entry
+private void addDebugLogEntry(String message) {
+    Handler mainHandler = new Handler(Looper.getMainLooper());
+    mainHandler.post(() -> {
+        try {
+            // Format: [HH:mm:ss] <message>
+            SimpleDateFormat sdf = new SimpleDateFormat("HH:mm:ss", Locale.US);
+            String timestamp = "[" + sdf.format(new Date()) + "]";
+            String logLine = timestamp + " " + message;
+            
+            // Get current text
+            String currentText = tvDebugLog.getText().toString();
+            
+            // Append new line
+            if (currentText.isEmpty()) {
+                tvDebugLog.setText(logLine);
+            } else {
+                tvDebugLog.setText(currentText + "\n" + logLine);
+            }
+            
+            // Keep only last 20 lines to prevent memory bloat
+            String[] lines = tvDebugLog.getText().toString().split("\n");
+            if (lines.length > MAX_DEBUG_LINES) {
+                StringBuilder sb = new StringBuilder();
+                for (int i = lines.length - MAX_DEBUG_LINES; i < lines.length; i++) {
+                    if (i > lines.length - MAX_DEBUG_LINES) sb.append("\n");
+                    sb.append(lines[i]);
+                }
+                tvDebugLog.setText(sb.toString());
+            }
+            
+            // Auto-scroll to bottom
+            svDebugScroll.post(() -> svDebugScroll.fullScroll(View.FOCUS_DOWN));
+        } catch (Exception e) {
+            Log.e(TAG, "Error adding debug log: " + e.getMessage());
+        }
+    });
+}
+
+// Toggle debug log visibility
+private void toggleDebugLog() {
+    SharedPreferences prefs = getSharedPreferences("app_prefs", MODE_PRIVATE);
+    boolean currentlyEnabled = prefs.getBoolean("debug_log_enabled", false);
+    boolean newState = !currentlyEnabled;
+    
+    // Update UI
+    int visibility = newState ? View.VISIBLE : View.GONE;
+    tvDebugLog.setVisibility(visibility);
+    svDebugScroll.setVisibility(visibility);
+    
+    // Save preference
+    SharedPreferences.Editor editor = prefs.edit();
+    editor.putBoolean("debug_log_enabled", newState);
+    editor.apply();
+    
+    Log.i(TAG, "Debug log toggled: " + (newState ? "ON" : "OFF"));
+}
+
+// Inner listener class for receiving debug events
+private class SpeechListenerImpl implements SpeechListener {
+    @Override
+    public void onSpeechRecognized(String text) {
+        // Placeholder - handled elsewhere in MainActivity
+    }
+    
+    @Override
+    public void onDebugLog(String debugMessage) {
+        addDebugLogEntry(debugMessage);
+    }
+}
+```
+
+**Layout Addition** (`activity_main.xml`):
+```xml
+<ScrollView
+    android:id="@+id/svDebugScroll"
+    android:layout_width="match_parent"
+    android:layout_height="200dp"
+    android:visibility="gone"
+    android:layout_below="@id/bottomNavigation">
+    
+    <TextView
+        android:id="@+id/tvDebugLog"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:textColor="#00FF00"
+        android:textSize="10sp"
+        android:textIsSelectable="true"
+        android:padding="8dp"
+        android:scrollbars="vertical" />
+</ScrollView>
+```
+
+### Overlay Permission Safeguard
+
+**Problem:** Display over other apps permission (SYSTEM_ALERT_WINDOW) causes install failures on some Android devices (e.g., Moto). ScamShield uses Activity-based alerts instead (no overlay needed), but we should prompt users to grant it for future features.
+
+**Location:** `MainActivity.java`
+
+```java
+// Check overlay permission at app startup
+private void checkOverlayPermission() {
+    // Only relevant for Android 6.0+ (Build.VERSION_CODES.M)
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
+        return;
+    }
+    
+    // Check if permission is already granted
+    if (Settings.canDrawOverlays(this)) {
+        Log.i(TAG, "✅ Overlay permission already granted");
+        return;
+    }
+    
+    // Check if we've already shown warning this session
+    SharedPreferences prefs = getSharedPreferences("app_prefs", MODE_PRIVATE);
+    boolean warningShown = prefs.getBoolean("overlay_warning_shown", false);
+    
+    if (!warningShown) {
+        showOverlayPermissionDialog();
+        
+        // Mark warning as shown
+        SharedPreferences.Editor editor = prefs.edit();
+        editor.putBoolean("overlay_warning_shown", true);
+        editor.apply();
+    }
+}
+
+// Show dialog explaining overlay permission
+private void showOverlayPermissionDialog() {
+    new AlertDialog.Builder(this, R.style.AlertDialog)
+        .setTitle("Enable Display Over Other Apps")
+        .setMessage("ScamShield needs permission to show alerts over other apps. "
+            + "Go to Settings > App Permissions > Display over other apps and enable it for ScamShield.")
+        .setPositiveButton("Open Settings", (dialog, which) -> openOverlaySettings())
+        .setNegativeButton("Not Now", (dialog, which) -> dialog.dismiss())
+        .setCancelable(false)
+        .show();
+}
+
+// Open Android Settings for overlay permission
+private void openOverlaySettings() {
+    try {
+        Intent intent = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+            Uri.parse("package:" + getPackageName()));
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        startActivity(intent);
+    } catch (ActivityNotFoundException e) {
+        Log.w(TAG, "Overlay settings not found, trying fallback...");
+        
+        // Fallback to app details settings
+        Intent intent = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+            Uri.parse("package:" + getPackageName()));
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        startActivity(intent);
+    }
+}
+```
+
+**Key Points:**
+- Only shown once per session (tracked in SharedPreferences with key: `overlay_warning_shown`)
+- Graceful fallback to ACTION_APPLICATION_DETAILS_SETTINGS if primary intent fails
+- Non-blocking: user can dismiss and continue using app
+
+### Fallback Alert Mechanism
+
+**Problem:** If ScamAlertActivity fails to launch (rare edge case), user gets no visual feedback that scam was detected.
+
+**Solution:** Trigger fallback alert by changing MainActivity's background color to RED for 2 seconds + vibration pattern.
+
+**Location:** `MainActivity.java`
+
+```java
+private static MainActivity instance;  // Static reference for callback
+
+@Override
+protected void onStart() {
+    super.onStart();
+    instance = this;  // Track instance for fallback alert
+    
+    // Register debug listener
+    SpeechListenerImpl listenerImpl = new SpeechListenerImpl();
+    ScamMonitorService.setDebugListener(listenerImpl);
+}
+
+@Override
+protected void onStop() {
+    super.onStop();
+    instance = null;
+    ScamMonitorService.clearDebugListener();
+}
+
+// Public static method called by ScamMonitorService when alert fails
+public static void triggerFallbackAlertStatic(String keyword) {
+    if (instance != null) {
+        instance.triggerFallbackAlert(keyword);
+    }
+}
+
+// Trigger RED background alert + vibration
+private void triggerFallbackAlert(String keyword) {
+    FrameLayout mainContainer = findViewById(R.id.main_container);
+    if (mainContainer == null) return;
+    
+    try {
+        // Change background to RED (#FFD32F2F)
+        mainContainer.setBackgroundColor(Color.parseColor("#FFD32F2F"));
+        
+        // Vibrate device in pattern (3 bursts)
+        Vibrator vibrator = (Vibrator) getSystemService(Context.VIBRATOR_SERVICE);
+        if (vibrator != null && vibrator.hasVibrator()) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                VibrationEffect effect = VibrationEffect.createWaveform(
+                    new long[]{0, 200, 100, 200, 100, 200}, -1);
+                vibrator.vibrate(effect);
+            } else {
+                vibrator.vibrate(new long[]{0, 200, 100, 200, 100, 200}, -1);
+            }
+        }
+        
+        Log.w(TAG, "🚨 FALLBACK ALERT TRIGGERED: " + keyword);
+        
+        // Reset background after 2 seconds
+        Handler handler = new Handler(Looper.getMainLooper());
+        handler.postDelayed(() -> {
+            mainContainer.setBackgroundColor(Color.parseColor("#121212"));
+            Log.i(TAG, "Alert background reset to normal");
+        }, 2000);
+        
+    } catch (Exception e) {
+        Log.e(TAG, "Error triggering fallback alert: " + e.getMessage());
+    }
+}
+```
+
+**Location:** `ScamMonitorService.java`
+
+```java
+// Enhanced showScamAlert with fallback trigger
+private void showScamAlert(String keywords) {
+    try {
+        // Try to launch alert activity
+        Intent alertIntent = ScamAlertActivity.createIntent(this, keywords, currentNumber);
+        startActivity(alertIntent);
+        
+        Log.i(TAG, "✅ Scam alert activity displayed");
+        
+        // Notify debug listener
+        if (debugListener != null) {
+            debugListener.onDebugLog("✅ Alert activity launched for: " + keywords);
+        }
+        
+    } catch (Exception e) {
+        Log.e(TAG, "❌ Error showing alert: " + e.getMessage());
+        
+        // Fallback 1: Toast
+        handler.post(() -> Toast.makeText(this, 
+            "Scam Alert: " + keywords, Toast.LENGTH_LONG).show());
+        
+        // Fallback 2: RED background alert in MainActivity
+        MainActivity.triggerFallbackAlertStatic(keywords);
+        
+        // Notify debug listener of failure
+        if (debugListener != null) {
+            debugListener.onDebugLog("❌ Alert failed, triggered fallback: " + e.getMessage());
+        }
+    }
+}
+```
+
+**Layout Update** (`activity_main.xml`):
+```xml
+<FrameLayout
+    android:id="@+id/main_container"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#121212">
+    
+    <FrameLayout
+        android:id="@+id/fragment_container"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:layout_above="@id/bottomNavigation" />
+    
+    <!-- Rest of layout... -->
+</FrameLayout>
+```
+
+### Threading Model & Handler Safety
+
+**Key Rule:** All UI updates must run on main thread, all background work in background threads.
+
+| Operation | Thread | Mechanism | Example |
+|-----------|--------|-----------|---------|
+| **Speech recognition** | System (OS) | Android framework | `SpeechRecognizer.startListening()` |
+| **onResults/onError callbacks** | Binder (non-main) | RecognitionListener | Override methods run on OS thread |
+| **Toast/UI updates from callback** | Main | handler.post() | `handler.post(() -> Toast.show())` |
+| **Auto-restart delay** | Main | handler.postDelayed() | `handler.postDelayed(this::start, 1000)` |
+| **Debug log append** | Main | handler.post() | `mainHandler.post(() -> textView.append(...))` |
+| **Keyword detection** | Binder (non-main) | STT callback thread | `onSpeechRecognized()` runs on callback thread |
+| **Alert launch** | Main | startActivity() | Called from service via debugListener or static |
+
+### Common Silent Failure Scenarios & Debug Approach
+
+**Scenario 1: Listening started but no speech detected**
+```
+Debug Log Output:
+[10:45:23] 🎤 Starting speech recognition...
+[10:45:24] ❌ Speech error: [6] No speech input
+[10:45:24] 🔄 Transient error detected, auto-restarting in 1 second...
+[10:45:25] 🎤 Starting speech recognition...
+(silence continues...)
+```
+**Root Causes:** Microphone muted, noise-cancellation enabled, RECORD_AUDIO denied
+**Check:** Verify audio input with system recorder app, check Settings > App Permissions
+
+**Scenario 2: Speech detected but no keyword match**
+```
+Debug Log Output:
+[10:46:01] 📢 Partial result: 'hello how are you'
+[10:46:03] ✅ Final result: 'hello how are you'
+[10:46:03] 🔄 Auto-restarting listening after onResults()
+```
+**Root Cause:** Spoken text doesn't contain scam keywords
+**Check:** Review SCAM_KEYWORDS list, test with actual scam phrases
+
+**Scenario 3: Keyword detected but no alert appears**
+```
+Debug Log Output:
+[10:47:15] 📢 Partial result: 'verify your OTP'
+[10:47:17] ✅ Final result: 'verify your OTP'
+[10:47:17] 🚨 SCAM KEYWORD DETECTED: 'OTP'
+[10:47:17] ❌ Alert failed, triggered fallback: No activity found
+```
+**Root Cause:** ScamAlertActivity not registered in AndroidManifest.xml
+**Check:** Verify `<activity>` declaration and `android:exported="true"`
+
+**Scenario 4: Listening stuck (no auto-restart)**
+```
+Debug Log Output:
+[10:48:30] ✅ Final result: 'test phrase'
+(no further logs - listening NOT restarted)
+```
+**Root Cause:** Auto-restart not called in onResults() or handler removed
+**Check:** Verify autoRestartListening() called in both onResults() and onError()
+
+### DO's & DON'Ts for Background Lifecycle & Debugging
+
+**DO:**
+1. Always call `autoRestartListening()` in both `onResults()` and `onError()` callbacks
+2. Use different delays for transient (1s) vs permanent (3s) errors
+3. Check if already listening (`isListening` flag) before starting again
+4. Use handler.postDelayed() for all delayed tasks (never Thread.sleep)
+5. Log all speech recognition events with emoji prefixes (📢, ✅, ❌, 🔄, 🚨)
+6. Store Handler/Runnable references for proper cleanup on destroy
+7. Always call removeCallbacks() in onDestroy() to prevent memory leaks
+8. Use SimpleDateFormat for debug log timestamps (for easy sorting)
+9. Limit debug log to 20 lines to prevent memory bloat
+10. Test auto-restart by disconnecting WiFi (triggers network timeout)
+11. Make debug log visible by default on first install (helps identify issues)
+12. Provide toggle for debug log in Settings (SharedPreferences key: `debug_log_enabled`)
+13. Trigger fallback alert when ScamAlertActivity fails to launch
+14. Use try-catch around overlay permission check (API 23+ requirement)
+15. Show overlay permission dialog only once per session (SharedPreferences key: `overlay_warning_shown`)
+
+**DON'T:**
+1. DON'T assume onResults() or onError() are called on main thread - always use handler.post()
+2. DON'T leave SpeechRecognizer in "listening" state without timeout
+3. DON'T call startListening() multiple times without checking isListening flag
+4. DON'T hardcode auto-restart delays - use constants (AUTO_RESTART_DELAY_MS)
+5. DON'T ignore onError() callbacks - they indicate failures that need recovery
+6. DON'T use Log.d() for debug events - use emoji-prefixed Log.i() for visibility
+7. DON'T forget to call handler.removeCallbacks() in onDestroy()
+8. DON'T append to TextViews from non-main threads without handler.post()
+9. DON'T use Toast directly in callbacks - wrap in handler.post()
+10. DON'T assume Settings.canDrawOverlays() is available (check Build.VERSION_CODES.M)
+11. DON'T show overlay permission dialog on every app start
+12. DON'T let fallback alert change background color permanently
+13. DON'T call triggerFallbackAlert() from main thread if instance is null
+14. DON'T forget to track MainActivity instance in static field for fallback callback
+15. DON'T assume Exception.getMessage() is not null when logging errors
+
+### Testing Checklist for Background Lifecycle
+
+- [ ] Install app on Android device (min SDK 24)
+- [ ] Open MainActivity and verify debug log appears (should show "Starting speech recognition...")
+- [ ] Toggle debug log visibility: should appear/disappear
+- [ ] Verify Setting is saved: close/reopen app, visibility state persists
+- [ ] Trigger incoming call (use test app like Google Dialer)
+- [ ] Speak non-scam phrase: verify "Heard: [text]" Toast appears
+- [ ] Check debug log contains: "🎤 Starting", "📢 Partial result", "✅ Final result", "🔄 Auto-restarting"
+- [ ] Speak scam keyword: verify "🚨 SCAM KEYWORD DETECTED" in debug log
+- [ ] Verify ScamAlertActivity appears within 2 seconds of keyword detection
+- [ ] Trigger keyword twice in 30 seconds: verify second alert is debounced in logs
+- [ ] Disconnect WiFi during call: verify "Transient error" recovery in logs
+- [ ] Test with device on lock screen: alert should appear over lock screen
+- [ ] Test with screen off: screen should turn on when alert appears
+- [ ] Verify fallback alert if you can reproduce ScamAlertActivity failure
+  - Expected: RED background (#FFD32F2F) for 2 seconds
+  - Expected: Vibration pattern plays
+  - Expected: Debug log shows "❌ Alert failed, triggered fallback"
+- [ ] Force-stop service and reopen call: listening should restart from onReceive()
+- [ ] Check logs for memory leaks: verify handler tasks cleaned up after destroy
+- [ ] Verify no Logcat errors related to Speech Recognition
+
+### Troubleshooting Background Lifecycle Issues
+
+**Problem:** Auto-restart not happening (listening stops after 60 seconds)
+- **Check 1:** Verify `autoRestartListening()` called in `onResults()`: `grep -n "autoRestartListening" GoogleSpeechRecognizer.java`
+- **Check 2:** Verify `autoRestartListening()` called in `onError()`: same grep
+- **Check 3:** Check if handler is null: `if (handler != null) handler.postDelayed(...)`
+- **Solution:** Add missing calls to `autoRestartListening()` in both callbacks
+
+**Problem:** isListening flag never becomes false (stuck in listening state)
+- **Check 1:** Verify `isListening = false` in `onError()` before restart
+- **Check 2:** Verify `isListening = false` in `onResults()` before restart
+- **Check 3:** Check for exception in autoRestartListening() that doesn't set `isListening = true`
+- **Solution:** Ensure all error/result paths set `isListening` before restarting
+
+**Problem:** Debug log not updating in real-time
+- **Check 1:** Verify debug log visibility toggle is ON
+- **Check 2:** Verify MainActivity instance is not null: `if (instance != null)`
+- **Check 3:** Verify handler.post() wrapping: `mainHandler.post(() -> ...)`
+- **Check 4:** Check Logcat for "Error adding debug log" exceptions
+- **Solution:** Use handler.post() for all TextViev updates, add null checks
+
+**Problem:** Fallback alert doesn't trigger when ScamAlertActivity fails
+- **Check 1:** Verify `MainActivity.triggerFallbackAlertStatic()` called in catch block
+- **Check 2:** Verify instance is not null: check onStart()/onStop() setup
+- **Check 3:** Verify main_container exists: `findViewById(R.id.main_container)`
+- **Check 4:** Check Logcat for exception in fallback: "Error triggering fallback alert"
+- **Solution:** Add null check for instance, verify container ID in XML
+
+**Problem:** Overlay permission dialog shows on every app start
+- **Check 1:** Verify SharedPreferences key is `overlay_warning_shown`
+- **Check 2:** Verify editor.apply() called (not just put)
+- **Check 3:** Check Logcat for SharedPreferences errors
+- **Solution:** Ensure SharedPreferences.Editor.apply() is called, use correct key
+
+**Problem:** Thread safety issues (Logcat shows "Only the original thread can touch its views")
+- **Check 1:** Search for all Toast.makeText() calls - must be in handler.post()
+- **Check 2:** Search for all tvDebugLog.setText() calls - must be in handler.post()
+- **Check 3:** Check autoRestartListening() - verify handler.postDelayed() used
+- **Solution:** Always wrap UI updates in handler.post(), use mainHandler for main thread
+
 ## Build Commands
 ```bash
 ./gradlew assembleDebug    # Debug build
