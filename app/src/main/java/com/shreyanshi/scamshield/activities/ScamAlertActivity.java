@@ -11,6 +11,7 @@ import android.os.Bundle;
 import android.os.VibrationEffect;
 import android.os.Vibrator;
 import android.telecom.TelecomManager;
+import android.util.Log;
 import android.view.Window;
 import android.view.WindowManager;
 import android.widget.Button;
@@ -22,6 +23,7 @@ import com.shreyanshi.scamshield.R;
 
 public class ScamAlertActivity extends AppCompatActivity {
 
+    private static final String TAG = "ScamAlert";
     public static final String EXTRA_KEYWORDS = "keywords";
     public static final String EXTRA_NUMBER = "number";
 
@@ -34,12 +36,14 @@ public class ScamAlertActivity extends AppCompatActivity {
         i.addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP);
         i.putExtra(EXTRA_KEYWORDS, keywords);
         i.putExtra(EXTRA_NUMBER, number);
+        Log.i(TAG, "🚨 Creating ScamAlertActivity intent for keyword: " + keywords);
         return i;
     }
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        Log.i(TAG, "🚨 ScamAlertActivity.onCreate() - Alert dialog starting");
         
         setupWindowFlags();
 
@@ -47,6 +51,8 @@ public class ScamAlertActivity extends AppCompatActivity {
 
         String keywords = getIntent().getStringExtra(EXTRA_KEYWORDS);
         String number = getIntent().getStringExtra(EXTRA_NUMBER);
+        
+        Log.i(TAG, "📢 Alert details - Keywords: " + keywords + ", Number: " + number);
 
         TextView tvKeywords = findViewById(R.id.tvAlertKeywords);
         TextView tvNumber = findViewById(R.id.tvAlertNumber);
@@ -56,10 +62,12 @@ public class ScamAlertActivity extends AppCompatActivity {
 
         if (tvKeywords != null) {
             tvKeywords.setText("Scam Alert: " + (keywords != null ? keywords : "Suspicious Activity Detected"));
+            Log.d(TAG, "✅ Keyword text updated");
         }
         if (tvNumber != null && number != null && !number.isEmpty()) {
             tvNumber.setText("From: " + number);
             tvNumber.setVisibility(TextView.VISIBLE);
+            Log.d(TAG, "✅ Number text updated: " + number);
         } else if (tvNumber != null) {
             tvNumber.setVisibility(TextView.GONE);
         }
@@ -77,6 +85,8 @@ public class ScamAlertActivity extends AppCompatActivity {
                 dismissAlert();
             });
         }
+        
+        Log.i(TAG, "✅ ScamAlertActivity fully initialized");
     }
 
     private void setupWindowFlags() {
@@ -107,6 +117,7 @@ public class ScamAlertActivity extends AppCompatActivity {
 
     private void playAlertSound() {
         try {
+            Log.d(TAG, "📢 Playing alert sound...");
             Uri alarmUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION);
             if (alarmUri == null) {
                 alarmUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE);
@@ -115,15 +126,19 @@ public class ScamAlertActivity extends AppCompatActivity {
                 ringtone = RingtoneManager.getRingtone(this, alarmUri);
                 if (ringtone != null) {
                     ringtone.play();
+                    Log.i(TAG, "✅ Alert sound playing");
                 }
+            } else {
+                Log.w(TAG, "⚠️ No ringtone URI available");
             }
         } catch (Exception e) {
-            e.printStackTrace();
+            Log.e(TAG, "Error playing sound: " + e.getMessage(), e);
         }
     }
 
     private void vibrateDevice() {
         try {
+            Log.d(TAG, "📳 Vibrating device...");
             Vibrator vibrator = (Vibrator) getSystemService(Context.VIBRATOR_SERVICE);
             if (vibrator != null && vibrator.hasVibrator()) {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -131,9 +146,10 @@ public class ScamAlertActivity extends AppCompatActivity {
                 } else {
                     vibrator.vibrate(new long[]{0, 500, 200, 500, 200, 500}, -1);
                 }
+                Log.i(TAG, "✅ Device vibration initiated");
             }
         } catch (Exception e) {
-            e.printStackTrace();
+            Log.e(TAG, "Error vibrating device: " + e.getMessage(), e);
         }
     }
 
@@ -152,17 +168,21 @@ public class ScamAlertActivity extends AppCompatActivity {
     }
 
     private void dismissAlert() {
+        Log.i(TAG, "🛑 Dismissing alert...");
         if (ringtone != null && ringtone.isPlaying()) {
             ringtone.stop();
+            Log.d(TAG, "⏹️ Alert sound stopped");
         }
         try {
             Vibrator vibrator = (Vibrator) getSystemService(Context.VIBRATOR_SERVICE);
             if (vibrator != null) {
                 vibrator.cancel();
+                Log.d(TAG, "⏹️ Vibration cancelled");
             }
         } catch (Exception e) {
-            e.printStackTrace();
+            Log.e(TAG, "Error cancelling vibration: " + e.getMessage());
         }
+        Log.i(TAG, "✅ Alert dismissed and resources cleaned up");
         finish();
     }
 

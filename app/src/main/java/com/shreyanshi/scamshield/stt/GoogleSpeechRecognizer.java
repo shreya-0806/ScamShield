@@ -9,6 +9,7 @@ import android.speech.RecognitionListener;
 import android.speech.RecognizerIntent;
 import android.speech.SpeechRecognizer;
 import android.util.Log;
+import android.widget.Toast;
 
 import java.util.ArrayList;
 
@@ -174,6 +175,8 @@ public class GoogleSpeechRecognizer implements SpeechProcessor, RecognitionListe
             
             if (!text.isEmpty() && listener != null) {
                 Log.d(TAG, "🔄 Partial result: '" + text + "'");
+                // Show Toast for real-time feedback
+                showToast("📢 Heard: " + text);
                 listener.onSpeechRecognized(text);
             }
         }
@@ -323,6 +326,17 @@ public class GoogleSpeechRecognizer implements SpeechProcessor, RecognitionListe
     @Override
     public void onEvent(int eventType, Bundle params) {
         // Not used in this implementation
+    }
+    
+    /**
+     * Display Toast message for user feedback
+     */
+    private void showToast(String message) {
+        try {
+            handler.post(() -> Toast.makeText(context, message, Toast.LENGTH_SHORT).show());
+        } catch (Exception e) {
+            Log.d(TAG, "Could not show Toast: " + e.getMessage());
+        }
     }
     
     /**

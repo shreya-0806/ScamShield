@@ -48,6 +48,10 @@ ScamShield is an Android app that detects scam calls in real-time using Google O
 14. Use Google On-Device Speech Recognizer via `SpeechRecognizer.createOnDeviceSpeechRecognizer(context)`
 15. Set `RecognizerIntent.EXTRA_PREFER_OFFLINE = true` for offline-first operation
 16. Implement auto-restart listening in `onResults()` and `onError()` methods for continuous monitoring
+17. Display persistent notification with "ScamShield Active" title and "Protecting you from fraud calls..." text
+18. Show Toast feedback "📢 Heard: [text]" for every recognized word (onPartialResults)
+19. Implement 30-second debounce between alert notifications to prevent spam
+20. Use white monochrome notification icon (ic_notification.xml) - never use colored icons
 
 ## DON'T
 1. DON'T require SYSTEM_ALERT_WINDOW (causes install issues on Moto devices)
@@ -62,6 +66,9 @@ ScamShield is an Android app that detects scam calls in real-time using Google O
 10. DON'T assume Google Speech is available - always check with `SpeechRecognizer.isRecognitionAvailable()`
 11. DON'T leave SpeechRecognizer listening indefinitely - implement auto-restart with bounded delays
 12. DON'T ignore `onError()` callbacks - implement graceful error handling with logging
+13. DON'T assume Toast will work in background - always use handler.post() for UI updates
+14. DON'T assume TelecomManager.endCall() is available - wrap in try-catch
+15. DON'T use deprecated WindowManager flags without API level fallback
 
 ## Common Issues & Solutions
 
@@ -634,6 +641,429 @@ private void processHypothesis(String hypothesis, String key) {
 6. DON'T process empty/null JSON strings silently
 7. DON'T hardcode timeouts - keep them synchronized
 8. DON'T rely on file existence checks - use state query methods
+
+## User Interface Feedback & Alert Overlays
+
+### Overview
+ScamShield provides real-time user feedback through persistent notifications and immediate alert overlays when scam keywords are detected. The implementation uses **Activity-based alerts (NO overlay permission required)** combined with audio/vibration feedback for maximum user awareness.
+
+### Architecture Pattern
+
+**Components:**
+1. **Persistent Notification** - Continuous foreground service notification showing app is active
+2. **ScamAlertActivity** - Activity-based alert (displays on top of current screen)
+3. **Real-Time Speech Feedback** - Toast messages showing what the recognizer is hearing
+4. **Audio/Vibration Alerts** - Audible alarm and device vibration when scam detected
+
+**Flow:**
+```
+Incoming Call
+     ↓
+CallReceiver detects PHONE_STATE
+     ↓
+ScamMonitorService starts (foreground with notification)
+     ↓
+GoogleSpeechRecognizer listens
+     ↓
+onPartialResults (shows Toast: "📢 Heard: [text]")
+     ↓
+Scam Keyword Detected in onSpeechRecognized()
+     ↓
+triggerAlert() called with debounce check
+     ↓
+ScamAlertActivity started with Intent flags:
+- FLAG_ACTIVITY_NEW_TASK
+- FLAG_ACTIVITY_CLEAR_TOP
+- FLAG_SHOW_WHEN_LOCKED (shows on lock screen)
+- FLAG_TURN_SCREEN_ON (wakes device)
+     ↓
+Alert UI shows:
+- Large red warning with "SCAM DETECTED!"
+- Keyword and caller number
+- Sound + vibration pattern (500ms bursts)
+- "End Call & Report" and "Dismiss" buttons
+```
+
+### Implementation Details
+
+#### 1. Persistent Notification (Foreground Service)
+**Location:** `ScamMonitorService.startForegroundWithNotification()`
+
+```java
+Notification notification = new NotificationCompat.Builder(this, CHANNEL_ID)
+    .setContentTitle("ScamShield Active")  // ✅ Shows app is running
+    .setContentText("Protecting you from fraud calls...")  // ✅ User context
+    .setSmallIcon(R.drawable.ic_notification)  // ✅ White monochrome (24x24 dp)
+    .setPriority(NotificationCompat.PRIORITY_LOW)  // Silent
+    .setOngoing(true)  // Cannot be dismissed
+    .setCategory(NotificationCompat.CATEGORY_SERVICE)  // Proper categorization
+    .setSubText("Real-time scam detection")  // Additional info
+    .setContentIntent(pendingIntent)  // Click to return to app
+    .build();
+
+if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+    startForeground(NOTIFICATION_ID, notification, 
+        ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE);
+} else {
+    startForeground(NOTIFICATION_ID, notification);
+}
+```
+
+**Requirements:**
+- NotificationChannel created FIRST (Android 8.0+)
+- Icon must be white monochrome (#FFFFFF) - use `ic_notification.xml`
+- `setOngoing(true)` prevents user dismissal
+- Called within 5 seconds of `onStartCommand()`
+
+#### 2. Real-Time Speech Feedback
+**Location:** `GoogleSpeechRecognizer.onPartialResults()`
+
+```java
+@Override
+public void onPartialResults(Bundle partialResults) {
+    ArrayList<String> results = partialResults.getStringArrayList(
+        SpeechRecognizer.RESULTS_RECOGNITION);
+    
+    if (results != null && !results.isEmpty()) {
+        String text = results.get(0).trim();
+        
+        if (!text.isEmpty() && listener != null) {
+            Log.d(TAG, "🔄 Partial result: '" + text + "'");
+            
+            // ✅ Show Toast for real-time feedback
+            showToast("📢 Heard: " + text);
+            
+            // Callback to service for keyword detection
+            listener.onSpeechRecognized(text);
+        }
+    }
+}
+
+private void showToast(String message) {
+    try {
+        handler.post(() -> Toast.makeText(context, message, Toast.LENGTH_SHORT).show());
+    } catch (Exception e) {
+        Log.d(TAG, "Could not show Toast: " + e.getMessage());
+    }
+}
+```
+
+**Purpose:**
+- User sees what the app is hearing in real-time
+- Shows as Toast at bottom of screen (non-intrusive)
+- Provides confidence that speech recognition is working
+- Logging with 📢 emoji for easy debugging
+
+#### 3. Scam Alert Activity (Activity-Based, NO Overlay)
+**Location:** `ScamAlertActivity` (53 lines, no overlay permission needed)
+
+```java
+public static Intent createIntent(Context ctx, String keywords, String number) {
+    Intent i = new Intent(ctx, ScamAlertActivity.class);
+    i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+    i.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP);
+    i.addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP);
+    i.putExtra(EXTRA_KEYWORDS, keywords);
+    i.putExtra(EXTRA_NUMBER, number);
+    return i;
+}
+
+private void setupWindowFlags() {
+    // Show on lock screen (Android 8.1+)
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+        setShowWhenLocked(true);
+        setTurnScreenOn(true);
+    } else {
+        // Fallback for older Android
+        Window window = getWindow();
+        window.addFlags(WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD);
+        window.addFlags(WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED);
+        window.addFlags(WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON);
+    }
+    
+    Window window = getWindow();
+    window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+    window.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
+}
+
+@Override
+protected void onCreate(Bundle savedInstanceState) {
+    super.onCreate(savedInstanceState);
+    
+    setupWindowFlags();
+    setContentView(R.layout.activity_scam_alert);
+    
+    // Get intent extras
+    String keywords = getIntent().getStringExtra(EXTRA_KEYWORDS);
+    String number = getIntent().getStringExtra(EXTRA_NUMBER);
+    
+    // Update UI with details
+    TextView tvKeywords = findViewById(R.id.tvAlertKeywords);
+    tvKeywords.setText("Scam Alert: " + keywords);
+    
+    // Play alert sound and vibration
+    playAlertSound();
+    vibrateDevice();
+    
+    // Setup button listeners
+    Button btnDismiss = findViewById(R.id.btnDismissAlert);
+    btnDismiss.setOnClickListener(v -> dismissAlert());
+    
+    Button btnEndCall = findViewById(R.id.btnEndCall);
+    btnEndCall.setOnClickListener(v -> {
+        endCall();
+        dismissAlert();
+    });
+}
+
+private void playAlertSound() {
+    Uri alarmUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION);
+    if (alarmUri != null) {
+        ringtone = RingtoneManager.getRingtone(this, alarmUri);
+        ringtone.play();
+    }
+}
+
+private void vibrateDevice() {
+    Vibrator vibrator = (Vibrator) getSystemService(Context.VIBRATOR_SERVICE);
+    if (vibrator != null && vibrator.hasVibrator()) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            vibrator.vibrate(VibrationEffect.createWaveform(
+                new long[]{0, 500, 200, 500, 200, 500}, -1));
+        } else {
+            vibrator.vibrate(new long[]{0, 500, 200, 500, 200, 500}, -1);
+        }
+    }
+}
+
+private void endCall() {
+    try {
+        TelecomManager telecomManager = (TelecomManager) getSystemService(Context.TELECOM_SERVICE);
+        if (telecomManager != null) {
+            telecomManager.endCall();
+        }
+    } catch (Exception e) {
+        Log.e(TAG, "Could not end call: " + e.getMessage());
+    }
+}
+
+private void dismissAlert() {
+    if (ringtone != null && ringtone.isPlaying()) {
+        ringtone.stop();
+    }
+    Vibrator vibrator = (Vibrator) getSystemService(Context.VIBRATOR_SERVICE);
+    if (vibrator != null) {
+        vibrator.cancel();
+    }
+    finish();
+}
+```
+
+**Key Features:**
+- Uses Activity (no SYSTEM_ALERT_WINDOW permission)
+- Shows on lock screen with `setShowWhenLocked(true)`
+- Wakes device with `setTurnScreenOn(true)`
+- Plays notification ringtone
+- Vibrates device in pattern (500ms + 200ms + 500ms + 200ms + 500ms)
+- Two action buttons: "End Call & Report" and "Dismiss"
+- Auto-cleanup of resources in `dismissAlert()`
+
+#### 4. Alert Layout (UI Design)
+**Location:** `activity_scam_alert.xml`
+
+```xml
+<LinearLayout android:background="#1A1A1A" android:padding="24dp">
+    <MaterialCardView 
+        app:cardBackgroundColor="#2D2D2D"
+        app:strokeColor="#D32F2F"  <!-- Red border -->
+        app:strokeWidth="2dp">
+        
+        <!-- Alert Icon (80x80 dp) -->
+        <ImageView android:src="@android:drawable/ic_dialog_alert"
+                   app:tint="#D32F2F" />
+        
+        <!-- Title -->
+        <TextView android:text="SCAM DETECTED!"
+                  android:textColor="#D32F2F"
+                  android:textSize="24sp"
+                  android:textStyle="bold" />
+        
+        <!-- Keyword Details -->
+        <TextView android:text="Scam Alert: [keyword]"
+                  android:textColor="#FF9800"
+                  android:textSize="18sp" />
+        
+        <!-- Caller Number -->
+        <TextView android:text="From: [number]"
+                  android:textColor="#AAAAAA"
+                  android:textSize="14sp" />
+        
+        <!-- Safety Advice -->
+        <TextView android:text="Do NOT share any personal information, OTPs, or bank details. Hang up immediately if possible."
+                  android:textColor="#FFEB3B"
+                  android:textSize="14sp"
+                  android:background="#333333" />
+        
+        <!-- Action Buttons -->
+        <Button android:text="End Call & Report"
+                android:backgroundTint="#D32F2F" />
+        <Button android:text="Dismiss"
+                android:backgroundTint="#757575" />
+    </MaterialCardView>
+</LinearLayout>
+```
+
+**Design:** Dark theme (#1A1A1A) with red accents (#D32F2F) for alarm urgency
+
+#### 5. Alert Trigger Pipeline
+**Location:** `ScamMonitorService.onSpeechRecognized()` → `triggerAlert()` → `showScamAlert()`
+
+```java
+@Override
+public void onSpeechRecognized(String text) {
+    if (text == null || text.isEmpty()) return;
+    
+    String normalizedText = text.toLowerCase().trim();
+    
+    // Check for keyword matches (O(1) lookup with HashSet)
+    for (String keyword : SCAM_KEYWORDS) {
+        if (normalizedText.contains(keyword)) {
+            Log.i(TAG, "🚨 SCAM KEYWORD DETECTED: '" + keyword + "'");
+            triggerAlert(keyword);
+            return;
+        }
+    }
+}
+
+private void triggerAlert(String detectedKeyword) {
+    long now = System.currentTimeMillis();
+    
+    // ✅ Debounce: Prevent multiple alerts within 30 seconds
+    if (now - lastAlertTime < ALERT_DEBOUNCE_MS) {
+        Log.d(TAG, "Alert debounced (cooldown active)");
+        return;
+    }
+    lastAlertTime = now;
+    
+    Log.w(TAG, "!!! SCAM KEYWORD DETECTED: " + detectedKeyword);
+    showScamAlert(detectedKeyword);
+}
+
+private void showScamAlert(String keywords) {
+    try {
+        // Create intent with context and extras
+        Intent alertIntent = ScamAlertActivity.createIntent(this, keywords, currentNumber);
+        
+        // Start activity (will appear on top of dialer/lock screen)
+        startActivity(alertIntent);
+        
+        Log.i(TAG, "✅ Scam alert displayed for: " + keywords);
+    } catch (Exception e) {
+        Log.e(TAG, "Error showing alert: " + e.getMessage());
+        
+        // Fallback to Toast if Activity fails
+        handler.post(() -> Toast.makeText(this, "Scam Alert: " + keywords, Toast.LENGTH_LONG).show());
+    }
+}
+```
+
+**Key Logic:**
+- 30-second debounce prevents alert spam (ALERT_DEBOUNCE_MS = 30000)
+- HashSet lookup O(1) for fast keyword detection
+- Try-catch with Toast fallback ensures user gets some feedback
+- Logging with 🚨 emoji highlights critical events
+
+### Permission Requirements
+
+**NO SYSTEM_ALERT_WINDOW Permission Required**
+- Activity-based approach uses existing Activity permissions
+- No special overlay permission needed (unlike old system alerts)
+- Safer on Moto and other OEM Android devices
+
+**Required Permissions Already in Manifest:**
+```xml
+<uses-permission android:name="android.permission.POST_NOTIFICATIONS" />  <!-- For alerts -->
+<uses-permission android:name="android.permission.RECORD_AUDIO" />  <!-- For listening -->
+<uses-permission android:name="android.permission.FOREGROUND_SERVICE" />  <!-- For service -->
+<uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />  <!-- Microphone -->
+```
+
+**Runtime Checks:**
+- RECORD_AUDIO verified before speech recognition starts
+- POST_NOTIFICATIONS checked on Android 13+ before showing notification
+
+### DO's & DON'Ts for UI/Alerts
+
+**DO:**
+1. Check RECORD_AUDIO permission at runtime before initializing speech recognizer
+2. Create NotificationChannel before building notification (Android 8.0+)
+3. Use white monochrome icons for notifications (pure #FFFFFF fill)
+4. Show Toast feedback for every recognized word (helps debug)
+5. Use Activity-based alerts instead of overlay windows
+6. Set `FLAG_SHOW_WHEN_LOCKED` and `FLAG_TURN_SCREEN_ON` for lock screen alerts
+7. Implement debounce (30 seconds minimum) to prevent alert spam
+8. Play sound and vibration for critical alerts (scam detected)
+9. Provide clear action buttons: "End Call" and "Dismiss"
+10. Log all alert events with timestamps and emoji markers (🚨, ✅, 📢)
+11. Cleanup resources in AlertActivity.dismissAlert() (stop sound, cancel vibration)
+12. Use handler.post() for Toast/UI updates from non-main threads
+
+**DON'T:**
+1. DON'T use SYSTEM_ALERT_WINDOW permission (causes install issues on Moto)
+2. DON'T create notifications without NotificationChannel (Android 8.0+ crash)
+3. DON'T use colored icons for notifications (must be monochrome white)
+4. DON'T assume POST_NOTIFICATIONS is granted (check on Android 13+)
+5. DON'T block main thread with alert display (use startActivity with flags)
+6. DON'T show multiple alerts for same keyword in quick succession
+7. DON'T leave ringtone playing after activity destroyed
+8. DON'T ignore vibration permission errors
+9. DON'T show Toast from background service without handler.post()
+10. DON'T assume TelecomManager.endCall() is available (wrap in try-catch)
+11. DON'T use deprecated WindowManager flags without fallback for older Android
+12. DON'T process speech results on non-main thread (use handler for UI updates)
+
+### Testing Checklist
+
+- [ ] Install app on Android device (minSdk 24)
+- [ ] Grant RECORD_AUDIO permission when prompted
+- [ ] Verify foreground notification appears with "ScamShield Active"
+- [ ] Trigger incoming call with test number
+- [ ] Speak non-scam words: verify Toast shows "📢 Heard: [word]" for each partial result
+- [ ] Speak scam keyword: verify alert activity appears immediately
+- [ ] Verify alert shows keyword, caller number, and advice text
+- [ ] Verify alert sound plays (notification ringtone)
+- [ ] Verify device vibrates in pattern (3 bursts of 500ms)
+- [ ] Test "End Call & Report" button
+- [ ] Test "Dismiss" button (stops sound/vibration)
+- [ ] Trigger same keyword twice within 30 seconds: verify 2nd alert is debounced
+- [ ] Test on lock screen: alert should appear over lock screen
+- [ ] Test with screen off: alert should turn screen on
+- [ ] Check logs for emoji markers: 🚨 (critical), ✅ (success), 📢 (info)
+
+### Troubleshooting
+
+**Problem:** Notification doesn't appear
+- **Solution:** Check NotificationChannel creation in createNotificationChannel()
+- Verify icon resource R.drawable.ic_notification exists
+- Check Android version (NotificationChannel required for O+)
+
+**Problem:** Toast feedback not showing
+- **Solution:** Ensure showToast() uses handler.post() for UI updates
+- Check that GoogleSpeechRecognizer has Toast import and showToast() method
+
+**Problem:** Alert activity not appearing
+- **Solution:** Verify ScamAlertActivity is exported in AndroidManifest.xml
+- Check intent flags: FLAG_ACTIVITY_NEW_TASK, FLAG_ACTIVITY_CLEAR_TOP
+- Verify setupWindowFlags() called with setShowWhenLocked() and setTurnScreenOn()
+
+**Problem:** Sound/vibration not working
+- **Solution:** Check device has vibrator (vibrator.hasVibrator())
+- Verify ringtone URI is not null (fallback to TYPE_RINGTONE if TYPE_NOTIFICATION fails)
+- Check Build.VERSION.SDK_INT for VibrationEffect API level
+
+**Problem:** Multiple alerts in quick succession
+- **Solution:** Implement 30-second debounce in triggerAlert()
+- Check lastAlertTime logic: now - lastAlertTime < ALERT_DEBOUNCE_MS
 
 ## Build Commands
 ```bash

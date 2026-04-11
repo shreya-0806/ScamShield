@@ -133,12 +133,13 @@ public class ScamMonitorService extends Service implements SpeechListener {
         try {
             Notification notification = new NotificationCompat.Builder(this, CHANNEL_ID)
                     .setContentTitle("ScamShield Active")
-                    .setContentText("Monitoring calls for scam attempts")
+                    .setContentText("Protecting you from fraud calls...")
                     .setSmallIcon(R.drawable.ic_notification)
                     .setPriority(NotificationCompat.PRIORITY_LOW)
                     .setOngoing(true)
                     .setCategory(NotificationCompat.CATEGORY_SERVICE)
                     .setContentIntent(pendingIntent)
+                    .setSubText("Real-time scam detection")
                     .build();
 
             Log.d(TAG, "Notification built successfully");
