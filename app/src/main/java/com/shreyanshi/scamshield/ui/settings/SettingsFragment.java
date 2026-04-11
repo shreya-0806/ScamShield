@@ -78,7 +78,6 @@ public class SettingsFragment extends Fragment {
         View permissionWarning = view.findViewById(R.id.permissionWarning);
         
         TextView tvStatusProtection = view.findViewById(R.id.tvStatusProtection);
-        TextView tvStatusVosk = view.findViewById(R.id.tvStatusVosk);
         Button btnAppPermissions = view.findViewById(R.id.btnAppPermissions);
         Button btnHelpFeedback = view.findViewById(R.id.btnHelpFeedback);
         Button btnPrivacyConsent = view.findViewById(R.id.btnPrivacyConsent);
@@ -209,25 +208,23 @@ public class SettingsFragment extends Fragment {
         updateStatusPanel();
     }
 
+    @Override
+    public void onPause() {
+        super.onPause();
+    }
+
     private void updateStatusPanel() {
         View view = getView();
         if (view == null) return;
         
         TextView tvStatusProtection = view.findViewById(R.id.tvStatusProtection);
-        TextView tvStatusVosk = view.findViewById(R.id.tvStatusVosk);
         
-        if (tvStatusProtection == null || tvStatusVosk == null) return;
+        if (tvStatusProtection == null) return;
         
         Context context = requireContext();
         SharedPreferences prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
         boolean protectionEnabled = prefs.getBoolean(KEY_SCAM_ALERTS, true);
         tvStatusProtection.setText(protectionEnabled ? "ACTIVE" : "INACTIVE");
         tvStatusProtection.setTextColor(protectionEnabled ? 0xFF4CAF50 : 0xFFF44336);
-
-        File modelDir = new File(context.getFilesDir(), "vosk-model");
-        File altModelDir = new File(context.getFilesDir(), "vosk-model-small-en-in");
-        boolean modelExists = modelDir.exists() || altModelDir.exists();
-        tvStatusVosk.setText(modelExists ? "READY" : "LOADING...");
-        tvStatusVosk.setTextColor(modelExists ? 0xFF4CAF50 : 0xFFFF9800);
     }
 }

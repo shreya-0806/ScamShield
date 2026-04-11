@@ -60,25 +60,6 @@
                         android:textStyle="bold" />
                 </LinearLayout>
 
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp"
-                    android:orientation="horizontal">
-                    <TextView
-                        android:layout_width="0dp"
-                        android:layout_weight="1"
-                        android:layout_height="wrap_content"
-                        android:text="Offline Model:"
-                        android:textColor="@android:color/white" />
-                    <TextView
-                        android:id="@+id/tvStatusVosk"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="CHECKING..."
-                        android:textStyle="bold" />
-                </LinearLayout>
-
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 

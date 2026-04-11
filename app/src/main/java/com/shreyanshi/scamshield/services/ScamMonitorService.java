@@ -14,9 +14,6 @@ import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
-import android.speech.RecognitionListener;
-import android.speech.RecognizerIntent;
-import android.speech.SpeechRecognizer;
 import android.util.Log;
 import android.widget.Toast;
 
@@ -28,12 +25,11 @@ import com.shreyanshi.scamshield.R;
 import com.shreyanshi.scamshield.activities.MainActivity;
 import com.shreyanshi.scamshield.activities.ScamAlertActivity;
 import com.shreyanshi.scamshield.stt.SpeechListener;
-import com.shreyanshi.scamshield.stt.VoskProcessor;
+import com.shreyanshi.scamshield.stt.GoogleSpeechRecognizer;
 
-import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.List;
-import java.util.Locale;
+import java.util.HashSet;
+import java.util.Set;
 
 import android.Manifest;
 import android.content.pm.PackageManager;
@@ -48,24 +44,19 @@ public class ScamMonitorService extends Service implements SpeechListener {
 
     private static final String CHANNEL_ID = "scam_monitor_channel";
 
-    private SpeechRecognizer speechRecognizer;
-    private android.content.Intent recognizerIntent;
-    private boolean isListening = false;
+    private GoogleSpeechRecognizer googleSpeechRecognizer;
     private boolean isServiceRunning = false;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private long lastAlertTime = 0;
     private String currentNumber = "";
 
-    private VoskProcessor voskProcessor = null;
-    private boolean usingVosk = false;
-
-    private final List<String> SCAM_KEYWORDS = Arrays.asList(
+    private final Set<String> SCAM_KEYWORDS = new HashSet<>(Arrays.asList(
             "otp", "one time password", "pin", "password", "account blocked", "verify your account",
             "bank", "transfer", "money", "verify", "card number", "upi", "paytm", "netbanking",
             "reset password", "remote access", "confirm code", "lottery", "gift card", "customer care",
             "blocked", "locked", "account", "aadhar", "PAN card", "KYC", "debit card", "credit card",
             "UPI id", "bank account", "suspended", "immediate action", "urgent"
-    );
+    ));
 
     @Override
     public void onCreate() {
@@ -98,17 +89,47 @@ public class ScamMonitorService extends Service implements SpeechListener {
     }
 
     private void startForegroundWithNotification() {
+        Log.d(TAG, "startForegroundWithNotification: Starting");
+        
+        // CRITICAL: Create channel FIRST before building notification
         try {
             createNotificationChannel();
         } catch (Exception e) {
             Log.e(TAG, "Failed to create notification channel: " + e.getMessage());
+            // Don't stop - try to continue
+        }
+
+        // Validate notification manager exists
+        NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+        if (nm == null) {
+            Log.e(TAG, "CRITICAL: NotificationManager is null - cannot show foreground service");
+            // FALLBACK: Try to stop gracefully
+            try {
+                stopSelf();
+            } catch (Exception ignored) {}
+            return;
+        }
+
+        // Verify icon resource exists and is accessible
+        try {
+            getResources().getDrawable(R.drawable.ic_notification, null);
+            Log.d(TAG, "Icon verification: R.drawable.ic_notification is accessible");
+        } catch (Exception e) {
+            Log.e(TAG, "CRITICAL: Icon resource missing or invalid: " + e.getMessage());
+            // FALLBACK: Use system icon (better than crash)
+            // Don't proceed with notification
+            try {
+                stopSelf();
+            } catch (Exception ignored) {}
+            return;
         }
 
         Intent notificationIntent = new Intent(this, MainActivity.class);
         PendingIntent pendingIntent = PendingIntent.getActivity(
                 this, 0, notificationIntent,
-                PendingIntent.FLAG_IMMUTABLE);
+                PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
 
+        // Build notification with full error handling
         try {
             Notification notification = new NotificationCompat.Builder(this, CHANNEL_ID)
                     .setContentTitle("ScamShield Active")
@@ -120,60 +141,96 @@ public class ScamMonitorService extends Service implements SpeechListener {
                     .setContentIntent(pendingIntent)
                     .build();
 
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE);
-            } else {
-                startForeground(NOTIFICATION_ID, notification);
+            Log.d(TAG, "Notification built successfully");
+
+            // Call startForeground with proper error handling
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE);
+                    Log.d(TAG, "startForeground called with FOREGROUND_SERVICE_TYPE_MICROPHONE");
+                } else {
+                    startForeground(NOTIFICATION_ID, notification);
+                    Log.d(TAG, "startForeground called (Android O/P)");
+                }
+                Log.d(TAG, "✅ Foreground service started successfully");
+            } catch (Exception e) {
+                Log.e(TAG, "startForeground failed: " + e.getClass().getName() + ": " + e.getMessage(), e);
+                Log.e(TAG, "Details: Notification ID=" + NOTIFICATION_ID + " Channel=" + CHANNEL_ID);
+                throw e; // Critical failure
             }
-            Log.d(TAG, "startForeground successful");
+
         } catch (Exception e) {
-            Log.e(TAG, "startForeground failed: " + e.getMessage(), e);
+            Log.e(TAG, "Failed to start foreground service: " + e.getMessage(), e);
+            // Last resort: cancel notification and stop
+            try {
+                nm.cancel(NOTIFICATION_ID);
+                stopSelf();
+            } catch (Exception ignored) {
+                Log.e(TAG, "Error during cleanup: " + ignored.getMessage());
+            }
         }
     }
 
     private void createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             NotificationManager nm = getSystemService(NotificationManager.class);
-            if (nm != null) {
+            if (nm == null) {
+                Log.e(TAG, "Cannot create notification channel: NotificationManager is null");
+                return;
+            }
+
+            try {
+                // Delete old channel if exists (forces recreation)
+                nm.deleteNotificationChannel(CHANNEL_ID);
+                Log.d(TAG, "Deleted old notification channel");
+            } catch (Exception e) {
+                Log.d(TAG, "No existing channel to delete: " + e.getMessage());
+            }
+
+            try {
                 NotificationChannel channel = new NotificationChannel(
                         CHANNEL_ID,
-                        "Scam Monitoring",
+                        "Scam Monitoring Service",
                         NotificationManager.IMPORTANCE_LOW
                 );
-                channel.setDescription("Shows when ScamShield is monitoring calls");
+                channel.setDescription("Real-time monitoring for scam calls");
                 channel.setShowBadge(false);
+                channel.enableVibration(false);
+                channel.setSound(null, null);
+                
                 nm.createNotificationChannel(channel);
+                Log.d(TAG, "✅ Notification channel created: " + CHANNEL_ID);
+            } catch (Exception e) {
+                Log.e(TAG, "Error creating notification channel: " + e.getMessage(), e);
+                throw e; // Critical
             }
         }
     }
 
     private void initializeSpeechRecognition() {
-        boolean hasRecordAudio = ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED;
+        // Check RECORD_AUDIO permission before using audio
+        boolean hasRecordAudio = ContextCompat.checkSelfPermission(this, 
+            Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED;
+        
         if (!hasRecordAudio) {
-            Log.w(TAG, "Record audio permission missing");
+            Log.e(TAG, "❌ RECORD_AUDIO permission missing - cannot start speech recognition");
             showToast("Microphone permission required for scam detection");
             return;
         }
-
-        Log.i(TAG, "Initializing speech recognition...");
+        
+        Log.i(TAG, "✅ RECORD_AUDIO permission verified");
         
         try {
-            voskProcessor = new VoskProcessor(this, this);
+            // Initialize Google On-Device Speech Recognizer (instant, no model loading)
+            googleSpeechRecognizer = new GoogleSpeechRecognizer(this, this);
+            googleSpeechRecognizer.start();
             
-            handler.postDelayed(() -> {
-                if (voskProcessor != null && voskProcessor.isAvailable()) {
-                    usingVosk = true;
-                    voskProcessor.start();
-                    Log.i(TAG, "Vosk STT started - listening for keywords");
-                    showToast("ScamShield is monitoring");
-                } else {
-                    Log.w(TAG, "Vosk not available, using Google Speech");
-                    setupGoogleSpeech();
-                }
-            }, 2000);
+            Log.i(TAG, "✅ Google On-Device Speech Recognizer initialized and listening");
+            showToast("ScamShield is monitoring calls");
+            
         } catch (Exception e) {
-            Log.e(TAG, "Vosk init failed: " + e.getMessage(), e);
-            setupGoogleSpeech();
+            Log.e(TAG, "❌ Error initializing Google Speech: " + e.getMessage(), e);
+            showToast("Failed to start scam detection");
         }
     }
     
@@ -182,64 +239,32 @@ public class ScamMonitorService extends Service implements SpeechListener {
             handler.post(() -> Toast.makeText(this, msg, Toast.LENGTH_SHORT).show());
         } catch (Exception ignored) {}
     }
-
-    private void setupGoogleSpeech() {
-        try {
-            if (!SpeechRecognizer.isRecognitionAvailable(this)) {
-                Log.e(TAG, "Google Speech recognition not available");
-                showToast("Speech recognition not available on this device");
-                return;
-            }
-            
-            Log.i(TAG, "Setting up Google Speech Recognizer");
-            
-            if (speechRecognizer != null) {
-                speechRecognizer.destroy();
-            }
-            
-            speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this);
-            speechRecognizer.setRecognitionListener(new GoogleRecognitionListener());
-
-            recognizerIntent = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
-            recognizerIntent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
-            recognizerIntent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, "en-IN");
-            recognizerIntent.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true);
-            recognizerIntent.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3);
-            recognizerIntent.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 1000);
-            recognizerIntent.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1500);
-            
-            startListeningGoogle();
-            Log.i(TAG, "Google Speech listening started");
-        } catch (Exception e) {
-            Log.e(TAG, "Google Speech setup failed: " + e.getMessage(), e);
-            showToast("Failed to start voice detection");
-        }
-    }
-
-    private void startListeningGoogle() {
-        if (speechRecognizer != null && !isListening) {
-            try {
-                isListening = true;
-                speechRecognizer.startListening(recognizerIntent);
-            } catch (Exception e) {
-                isListening = false;
-                Log.e(TAG, "Google start failed: " + e.getMessage());
-                handler.postDelayed(this::startListeningGoogle, 2000);
-            }
-        }
-    }
-
+    
     @Override
     public void onSpeechRecognized(String text) {
-        if (text == null || text.isEmpty()) return;
+        if (text == null || text.isEmpty()) {
+            Log.d(TAG, "Empty text received from speech recognizer");
+            return;
+        }
         
-        String lowerText = text.toLowerCase();
-        for (String k : SCAM_KEYWORDS) {
-            if (lowerText.contains(k)) {
-                triggerAlert(k);
-                break;
+        Log.d(TAG, "📢 Recognized text: '" + text + "'");
+        
+        // Normalize text: lowercase and trim whitespace
+        String normalizedText = text.toLowerCase().trim();
+        
+        // Check for keyword matches
+        for (String keyword : SCAM_KEYWORDS) {
+            // Use word boundary matching: keyword must be a complete word
+            // This prevents "pin" from matching "pincode" if we want strict matching
+            // For now, using contains() for better recall (catches "verify your account")
+            if (normalizedText.contains(keyword)) {
+                Log.i(TAG, "🚨 SCAM KEYWORD DETECTED: '" + keyword + "' in '" + text + "'");
+                triggerAlert(keyword);
+                return; // Exit after first match to avoid multiple alerts
             }
         }
+        
+        Log.d(TAG, "No scam keywords detected in: '" + text + "'");
     }
 
     private void triggerAlert(String detectedKeyword) {
@@ -264,66 +289,23 @@ public class ScamMonitorService extends Service implements SpeechListener {
         }
     }
 
-    private class GoogleRecognitionListener implements RecognitionListener {
-        @Override public void onReadyForSpeech(android.os.Bundle params) { 
-            isListening = true;
-            Log.d(TAG, "Google Speech ready");
-        }
-        @Override public void onBeginningOfSpeech() {}
-        @Override public void onRmsChanged(float rmsdB) {}
-        @Override public void onBufferReceived(byte[] buffer) {}
-        @Override public void onEndOfSpeech() { 
-            isListening = false; 
-        }
-        @Override public void onError(int error) {
-            isListening = false;
-            Log.w(TAG, "Google Speech error: " + error);
-            handler.postDelayed(() -> {
-                if (isServiceRunning) {
-                    startListeningGoogle();
-                }
-            }, 1500);
-        }
-        @Override
-        public void onResults(android.os.Bundle results) {
-            processResults(results);
-            isListening = false;
-            if (isServiceRunning) {
-                startListeningGoogle();
-            }
-        }
-        @Override
-        public void onPartialResults(android.os.Bundle partialResults) {
-            processResults(partialResults);
-        }
-        @Override public void onEvent(int eventType, android.os.Bundle params) {}
-    }
-
-    private void processResults(android.os.Bundle results) {
-        ArrayList<String> texts = results.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);
-        if (texts != null) {
-            for (String text : texts) {
-                onSpeechRecognized(text);
-            }
-        }
-    }
-
     private void stopMonitoring() {
         isServiceRunning = false;
+        Log.d(TAG, "🛑 Stopping monitoring...");
         
-        if (voskProcessor != null) {
-            voskProcessor.stop();
-            voskProcessor = null;
-        }
-        if (speechRecognizer != null) {
+        // Stop Google On-Device Speech Recognizer
+        if (googleSpeechRecognizer != null) {
             try {
-                speechRecognizer.stopListening();
-            } catch (Exception ignored) {}
-            speechRecognizer.cancel();
-            speechRecognizer.destroy();
-            speechRecognizer = null;
+                googleSpeechRecognizer.stop();
+                googleSpeechRecognizer.destroy();
+                Log.d(TAG, "✅ Google Speech Recognizer stopped and destroyed");
+            } catch (Exception e) {
+                Log.e(TAG, "Error stopping Google Speech: " + e.getMessage());
+            }
+            googleSpeechRecognizer = null;
         }
-        Log.d(TAG, "Monitoring stopped");
+        
+        Log.i(TAG, "✅ Monitoring stopped completely");
     }
 
     @Override
