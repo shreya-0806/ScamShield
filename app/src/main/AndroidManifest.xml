@@ -14,6 +14,8 @@
     <uses-permission android:name="android.permission.READ_CALL_LOG" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ANSWER_PHONE_CALLS" />
+    <uses-permission android:name="android.permission.BIND_INCALL_SERVICE" />
+    <uses-permission android:name="android.permission.MANAGE_ONGOING_CALLS" />
 
     <!-- Package visibility for Android 11+ - Required for Google Speech Recognizer discovery -->
     <queries>
@@ -25,6 +27,7 @@
     <application
         android:name="com.shreyanshi.scamshield.ScamApplication"
         android:allowBackup="true"
+        android:hardwareAccelerated="true"
         android:icon="@mipmap/ic_launcher"
         android:label="ScamShield"
         android:theme="@style/Theme.ScamShield">
@@ -86,6 +89,16 @@
             android:name="com.shreyanshi.scamshield.services.CallRecordingService"
             android:enabled="true"
             android:exported="false" />
+
+        <!-- InCallService required for default dialer role (Android 10+) -->
+        <service
+            android:name="com.shreyanshi.scamshield.services.ScamShieldInCallService"
+            android:exported="true"
+            android:permission="android.permission.BIND_INCALL_SERVICE">
+            <intent-filter>
+                <action android:name="android.telecom.InCallService" />
+            </intent-filter>
+        </service>
 
         <receiver android:name="com.shreyanshi.scamshield.services.CallReceiver"
             android:exported="true"

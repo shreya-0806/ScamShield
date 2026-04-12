@@ -104,6 +104,10 @@ public class GoogleSpeechRecognizer implements SpeechProcessor, RecognitionListe
     
     /**
      * Start listening for speech input
+     * 
+     * SAFETY FIX: Adds 1-second delay before first startListening() call
+     * This prevents race condition with WindowManager initialization on Moto/Redmi
+     * The OS needs time to set up audio resources after overlay window is created
      */
     @Override
     public void start() {
@@ -117,14 +121,24 @@ public class GoogleSpeechRecognizer implements SpeechProcessor, RecognitionListe
             return;
         }
         
-        try {
-            isListening = true;
-            speechRecognizer.startListening(recognizerIntent);
-            Log.i(TAG, "📢 Started listening for speech input");
-        } catch (Exception e) {
-            Log.e(TAG, "❌ Error starting listening: " + e.getMessage(), e);
-            isListening = false;
-        }
+        // SAFETY: Add 1-second delay before first listening to prevent race condition
+        // with WindowManager initialization (Redmi/Moto crash fix)
+        Log.d(TAG, "⏳ Delaying speech start by 1 second (crash safety)...");
+        handler.postDelayed(() -> {
+            try {
+                if (speechRecognizer == null) {
+                    Log.e(TAG, "❌ Speech recognizer became null during startup delay");
+                    return;
+                }
+                
+                isListening = true;
+                speechRecognizer.startListening(recognizerIntent);
+                Log.i(TAG, "📢 Started listening for speech input");
+            } catch (Exception e) {
+                Log.e(TAG, "❌ Error starting listening: " + e.getMessage(), e);
+                isListening = false;
+            }
+        }, 1000);  // 1 second delay for safety
     }
     
     /**
@@ -177,7 +191,16 @@ public class GoogleSpeechRecognizer implements SpeechProcessor, RecognitionListe
                 Log.d(TAG, "🔄 Partial result: '" + text + "'");
                 // Show Toast for real-time feedback
                 showToast("📢 Heard: " + text);
+                // Callback for speech recognition
                 listener.onSpeechRecognized(text);
+                // Debug logging for in-app display
+                if (listener instanceof SpeechListener) {
+                    try {
+                        listener.onDebugLog("📢 Partial: " + text);
+                    } catch (Exception e) {
+                        Log.d(TAG, "Debug log callback failed: " + e.getMessage());
+                    }
+                }
             }
         }
     }
@@ -198,12 +221,32 @@ public class GoogleSpeechRecognizer implements SpeechProcessor, RecognitionListe
                 Log.i(TAG, "✅ Final result: '" + text + "'");
                 if (listener != null) {
                     listener.onSpeechRecognized(text);
+                    // Debug logging
+                    try {
+                        listener.onDebugLog("✅ Final: " + text);
+                    } catch (Exception e) {
+                        Log.d(TAG, "Debug log callback failed: " + e.getMessage());
+                    }
                 }
             } else {
                 Log.d(TAG, "📝 Empty final result");
+                if (listener != null) {
+                    try {
+                        listener.onDebugLog("📝 Empty result");
+                    } catch (Exception e) {
+                        Log.d(TAG, "Debug log callback failed: " + e.getMessage());
+                    }
+                }
             }
         } else {
             Log.d(TAG, "📝 No results received");
+            if (listener != null) {
+                try {
+                    listener.onDebugLog("📝 No results");
+                } catch (Exception e) {
+                    Log.d(TAG, "Debug log callback failed: " + e.getMessage());
+                }
+            }
         }
         
         // Auto-restart for continuous monitoring
@@ -214,27 +257,77 @@ public class GoogleSpeechRecognizer implements SpeechProcessor, RecognitionListe
     /**
      * RecognitionListener: Called when an error occurs
      * Implements graceful error handling with auto-restart for transient errors
+     * 
+     * Special handling for ERROR_NO_MATCH and ERROR_RECOGNIZER_BUSY:
+     * These errors occur when the recognizer makes the "tu tu tu" beep sound,
+     * indicating it's still monitoring for speech. We restart immediately (500ms)
+     * instead of waiting 1-3 seconds, so the user's voice after the beep is captured.
      */
     @Override
     public void onError(int errorCode) {
         String errorMessage = getErrorString(errorCode);
         Log.e(TAG, "❌ Speech recognition error: [" + errorCode + "] " + errorMessage);
         
+        // Debug logging
+        if (listener != null) {
+            try {
+                listener.onDebugLog("❌ Error [" + errorCode + "]: " + errorMessage);
+            } catch (Exception e) {
+                Log.d(TAG, "Debug log callback failed: " + e.getMessage());
+            }
+        }
+        
         isListening = false;
         
-        // Auto-restart on transient errors
+        // Special handling for NO_MATCH (7) and RECOGNIZER_BUSY (8)
+        // These occur during normal operation (beep sound) and need immediate restart
+        if (errorCode == SpeechRecognizer.ERROR_NO_MATCH 
+                || errorCode == SpeechRecognizer.ERROR_RECOGNIZER_BUSY) {
+            if (autoRestartEnabled) {
+                Log.i(TAG, "🔄 Beep heard (NO_MATCH/BUSY), restarting immediately (500ms)...");
+                if (listener != null) {
+                    try {
+                        listener.onDebugLog("🔄 Beep heard, listening resumed in 500ms...");
+                    } catch (Exception e) {
+                        Log.d(TAG, "Debug log callback failed: " + e.getMessage());
+                    }
+                }
+                // Immediate restart after short delay (don't wait 1 second)
+                handler.postDelayed(this::autoRestartListening, 500);
+            }
+            return; // Don't process further, just restart
+        }
+        
+        // Standard error handling for other transient errors
         if (autoRestartEnabled && isTransientError(errorCode)) {
             Log.i(TAG, "🔄 Transient error detected, auto-restarting...");
+            if (listener != null) {
+                try {
+                    listener.onDebugLog("🔄 Auto-restarting after error...");
+                } catch (Exception e) {
+                    Log.d(TAG, "Debug log callback failed: " + e.getMessage());
+                }
+            }
             autoRestartListening();
         } else if (autoRestartEnabled) {
             // Even for non-transient errors, retry after longer delay
             Log.w(TAG, "⚠️ Non-transient error, retrying after delay...");
+            if (listener != null) {
+                try {
+                    listener.onDebugLog("⚠️ Retrying in 3 seconds...");
+                } catch (Exception e) {
+                    Log.d(TAG, "Debug log callback failed: " + e.getMessage());
+                }
+            }
             handler.postDelayed(this::autoRestartListening, 3000);
         }
     }
     
     /**
      * Determine if an error is transient (recoverable) or permanent
+     * 
+     * Note: ERROR_NO_MATCH and ERROR_RECOGNIZER_BUSY are handled specially
+     * in onError() with immediate 500ms restart (see onError() implementation)
      */
     private boolean isTransientError(int errorCode) {
         return errorCode == SpeechRecognizer.ERROR_NETWORK_TIMEOUT
@@ -342,23 +435,40 @@ public class GoogleSpeechRecognizer implements SpeechProcessor, RecognitionListe
     /**
      * Clean up and release resources
      * Call this in Activity/Service onDestroy()
+     * 
+     * SAFETY FIX: Properly destroys recognizer to prevent "Double Initialization" crashes
      */
     public void destroy() {
         try {
-            // Cancel any pending handler tasks
+            // Cancel any pending handler tasks FIRST
             handler.removeCallbacksAndMessages(null);
+            Log.d(TAG, "✅ Cancelled all pending handler tasks");
             
             // Stop listening if active
             if (speechRecognizer != null) {
-                if (isListening) {
-                    speechRecognizer.stopListening();
+                try {
+                    if (isListening) {
+                        speechRecognizer.stopListening();
+                        Log.d(TAG, "✅ Stopped listening");
+                    }
+                } catch (Exception e) {
+                    Log.w(TAG, "⚠️ Error stopping listening: " + e.getMessage());
                 }
-                speechRecognizer.destroy();
+                
+                // CRITICAL: Destroy recognizer completely
+                try {
+                    speechRecognizer.destroy();
+                    Log.d(TAG, "✅ Destroyed speech recognizer");
+                } catch (Exception e) {
+                    Log.w(TAG, "⚠️ Error destroying recognizer: " + e.getMessage());
+                }
+                
+                // Set to null IMMEDIATELY to prevent reuse (prevents double init crash)
                 speechRecognizer = null;
             }
             
             isListening = false;
-            Log.i(TAG, "✅ GoogleSpeechRecognizer destroyed and resources cleaned up");
+            Log.i(TAG, "✅ GoogleSpeechRecognizer destroyed and resources cleaned");
         } catch (Exception e) {
             Log.e(TAG, "❌ Error during cleanup: " + e.getMessage(), e);
         }

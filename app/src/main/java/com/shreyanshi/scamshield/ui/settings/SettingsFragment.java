@@ -88,8 +88,13 @@ public class SettingsFragment extends Fragment {
             switchScamAlerts.setChecked(prefs.getBoolean(KEY_SCAM_ALERTS, true));
             switchScamAlerts.setOnCheckedChangeListener((buttonView, isChecked) -> {
                 if (isChecked) {
+                    // ENABLE: Request permissions and start service
+                    prefs.edit().putBoolean(KEY_SCAM_ALERTS, true).apply();
                     requestScamDetectionPermissions();
+                    startScamProtection();
                 } else {
+                    // DISABLE: Stop service immediately
+                    stopScamProtection();
                     prefs.edit().putBoolean(KEY_SCAM_ALERTS, false).apply();
                     Toast.makeText(requireContext(), "Scam detection disabled", Toast.LENGTH_SHORT).show();
                 }
@@ -200,6 +205,44 @@ public class SettingsFragment extends Fragment {
         intent.setData(uri);
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         startActivity(intent);
+    }
+
+    /**
+     * Start ScamMonitorService when user enables scam detection.
+     * Uses startForegroundService() on Android O+ with proper notification.
+     */
+    private void startScamProtection() {
+        try {
+            Context context = requireContext();
+            Intent serviceIntent = new Intent(context, com.shreyanshi.scamshield.services.ScamMonitorService.class);
+            
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                context.startForegroundService(serviceIntent);
+            } else {
+                context.startService(serviceIntent);
+            }
+            
+            android.util.Log.i("SettingsFragment", "✅ ScamMonitorService started");
+        } catch (Exception e) {
+            android.util.Log.e("SettingsFragment", "❌ Error starting service: " + e.getMessage());
+            Toast.makeText(requireContext(), "Error starting scam protection", Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    /**
+     * Stop ScamMonitorService when user disables scam detection.
+     * Removes the foreground notification immediately.
+     */
+    private void stopScamProtection() {
+        try {
+            Context context = requireContext();
+            Intent serviceIntent = new Intent(context, com.shreyanshi.scamshield.services.ScamMonitorService.class);
+            context.stopService(serviceIntent);
+            
+            android.util.Log.i("SettingsFragment", "⏹️ ScamMonitorService stopped");
+        } catch (Exception e) {
+            android.util.Log.e("SettingsFragment", "❌ Error stopping service: " + e.getMessage());
+        }
     }
 
     @Override

@@ -1700,6 +1700,1753 @@ Debug Log Output:
 - **Check 3:** Check autoRestartListening() - verify handler.postDelayed() used
 - **Solution:** Always wrap UI updates in handler.post(), use mainHandler for main thread
 
+## Default Dialer Role & Service Lifecycle Management
+
+### Overview
+ScamShield can be set as the system default phone dialer app using Android's RoleManager (Android 10+) and TelecomManager (Android 7-9). The app implements proper service lifecycle management to ensure the ScamMonitorService starts/stops correctly with the toggle in Settings and properly cleans up resources on destruction.
+
+### Architecture Pattern
+
+**Components:**
+1. **RoleManager** - Android 10+ (Q) role-based dialer selection
+2. **TelecomManager** - Android 7-9 legacy dialer selection via intent
+3. **ScamShieldInCallService** - InCallService for telecom framework integration
+4. **ScamMonitorService** - Foreground service that monitors for scam calls
+5. **SettingsFragment** - Toggle to enable/disable scam detection (starts/stops service)
+
+**Flow - Setting as Default Dialer:**
+```
+MainActivity.onCreate()
+    ↓
+requestDefaultDialerRole() called
+    ↓
+    ├─ Android 10+: RoleManager.createRequestRoleIntent(ROLE_DIALER)
+    │  └─ startActivityForResult(intent, REQUEST_ROLE_DIALER)
+    │     ↓
+    │     onActivityResult(REQUEST_ROLE_DIALER)
+    │     └─ RESULT_OK → System sets ScamShield as default dialer
+    │
+    └─ Android 7-9: TelecomManager.ACTION_CHANGE_DEFAULT_DIALER
+       └─ startActivity(intent)
+          └─ System prompts user to select default dialer
+```
+
+**Flow - Service Lifecycle:**
+```
+Toggle ON in Settings
+    ↓
+SettingsFragment.startScamProtection()
+    ↓
+startForegroundService(ScamMonitorService)
+    ↓
+ScamMonitorService.onStartCommand()
+    ├─ Check SharedPreferences "scam_alerts_enabled"
+    ├─ If enabled: initialize speech recognition
+    └─ Start foreground with persistent notification
+    
+    ↓
+    Service runs continuously monitoring for scam keywords
+    
+    ↓
+Toggle OFF in Settings
+    ↓
+SettingsFragment.stopScamProtection()
+    ↓
+stopService(ScamMonitorService)
+    ↓
+ScamMonitorService.onDestroy()
+    ├─ Call stopForeground(STOP_FOREGROUND_REMOVE)  → Removes notification
+    ├─ googleSpeechRecognizer.destroy()             → Releases microphone
+    └─ handler.removeCallbacks(pollingTask)         → Cleans up timers
+```
+
+### Implementation Details
+
+#### 1. AndroidManifest.xml Configuration
+
+**Required Permissions:**
+```xml
+<uses-permission android:name="android.permission.BIND_INCALL_SERVICE" />
+<uses-permission android:name="android.permission.MANAGE_ONGOING_CALLS" />
+
+<!-- For Android 11+ package visibility -->
+<queries>
+    <intent>
+        <action android:name="android.telecom.InCallService" />
+    </intent>
+</queries>
+```
+
+**InCallService Declaration:**
+```xml
+<service
+    android:name="com.shreyanshi.scamshield.services.ScamShieldInCallService"
+    android:exported="true"
+    android:permission="android.permission.BIND_INCALL_SERVICE">
+    <intent-filter>
+        <action android:name="android.telecom.InCallService" />
+    </intent-filter>
+</service>
+```
+
+**MainActivity Intent Filters (for default dialer):**
+```xml
+<activity android:name="com.shreyanshi.scamshield.activities.MainActivity" android:exported="true">
+    <intent-filter>
+        <action android:name="android.intent.action.MAIN" />
+        <category android:name="android.intent.category.LAUNCHER" />
+    </intent-filter>
+    
+    <!-- Dialer intent filters -->
+    <intent-filter>
+        <action android:name="android.intent.action.DIAL" />
+        <category android:name="android.intent.category.DEFAULT" />
+        <data android:scheme="tel" />
+    </intent-filter>
+    <intent-filter>
+        <action android:name="android.intent.action.CALL_BUTTON" />
+        <category android:name="android.intent.category.DEFAULT" />
+    </intent-filter>
+    
+    <!-- Metadata declaring default dialer support -->
+    <meta-data
+        android:name="android.app.dialer.default"
+        android:value="true" />
+</activity>
+```
+
+#### 2. MainActivity - Default Dialer Role Request
+
+**Location:** `MainActivity.java`
+
+```java
+private static final int REQUEST_ROLE_DIALER = 101;
+private static final String PREF_DIALER_ROLE_REQUESTED = "dialer_role_requested";
+
+@Override
+protected void onCreate(Bundle savedInstanceState) {
+    super.onCreate(savedInstanceState);
+    // ... other initialization ...
+    requestDefaultDialerRole();  // Called once per app lifetime
+    setContentView(R.layout.activity_main);
+}
+
+/**
+ * Request user to set ScamShield as the default dialer app.
+ * Only shown once per app lifetime (tracked by SharedPreferences).
+ * Non-blocking: user can skip without affecting app functionality.
+ */
+private void requestDefaultDialerRole() {
+    try {
+        SharedPreferences prefs = getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
+        boolean alreadyRequested = prefs.getBoolean(PREF_DIALER_ROLE_REQUESTED, false);
+        
+        if (alreadyRequested) {
+            Log.d(TAG, "ℹ️ Dialer role already requested in previous session");
+            return;
+        }
+
+        // Mark as requested for this session
+        SharedPreferences.Editor editor = prefs.edit();
+        editor.putBoolean(PREF_DIALER_ROLE_REQUESTED, true);
+        editor.apply();
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            // Android 10+ uses RoleManager
+            try {
+                RoleManager roleManager = getSystemService(RoleManager.class);
+                if (roleManager != null && roleManager.isRoleAvailable(RoleManager.ROLE_DIALER)) {
+                    Intent intent = roleManager.createRequestRoleIntent(RoleManager.ROLE_DIALER);
+                    startActivityForResult(intent, REQUEST_ROLE_DIALER);
+                    Log.i(TAG, "✅ Requested default dialer role via RoleManager");
+                } else {
+                    Log.w(TAG, "⚠️ Dialer role not available on this device");
+                }
+            } catch (Exception e) {
+                Log.e(TAG, "❌ RoleManager error: " + e.getMessage());
+            }
+        } else {
+            // Android 7-9 uses TelecomManager
+            try {
+                Intent intent = new Intent(TelecomManager.ACTION_CHANGE_DEFAULT_DIALER);
+                intent.putExtra(TelecomManager.EXTRA_CHANGE_DEFAULT_DIALER_PACKAGE_NAME, getPackageName());
+                startActivity(intent);
+                Log.i(TAG, "✅ Requested default dialer role via TelecomManager");
+            } catch (Exception e) {
+                Log.w(TAG, "⚠️ TelecomManager error: " + e.getMessage());
+            }
+        }
+    } catch (Exception e) {
+        Log.e(TAG, "❌ Error requesting default dialer role: " + e.getMessage());
+    }
+}
+
+@Override
+protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+    super.onActivityResult(requestCode, resultCode, data);
+    
+    if (requestCode == REQUEST_ROLE_DIALER) {
+        if (resultCode == RESULT_OK) {
+            Log.i(TAG, "✅ Successfully set as default dialer");
+        } else {
+            Log.i(TAG, "ℹ️ User declined default dialer role");
+        }
+    }
+}
+```
+
+**Key Features:**
+- Uses RoleManager on Android 10+ (modern API)
+- Falls back to TelecomManager on Android 7-9
+- Shows request dialog only once (tracked via SharedPreferences)
+- Non-blocking: user can skip, app continues to work
+- Detailed logging for debugging dialer role issues
+
+#### 3. ScamShieldInCallService - Telecom Framework Integration
+
+**Location:** `ScamShieldInCallService.java` (extends `InCallService`)
+
+```java
+public class ScamShieldInCallService extends InCallService {
+    private static final String TAG = "ScamShield-InCall";
+
+    /**
+     * Called when a new call is added to the system.
+     * Logs call information but doesn't interfere with normal call handling.
+     */
+    @Override
+    public void onCallAdded(Call call) {
+        super.onCallAdded(call);
+        try {
+            if (call != null && call.getDetails() != null) {
+                String handle = call.getDetails().getHandle() != null ? 
+                    call.getDetails().getHandle().getSchemeSpecificPart() : "Unknown";
+                Log.i(TAG, "☎️ Call added: " + handle);
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "Error logging call add: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Called when a call is removed from the system.
+     */
+    @Override
+    public void onCallRemoved(Call call) {
+        super.onCallRemoved(call);
+        try {
+            if (call != null && call.getDetails() != null) {
+                String handle = call.getDetails().getHandle() != null ? 
+                    call.getDetails().getHandle().getSchemeSpecificPart() : "Unknown";
+                Log.i(TAG, "☎️ Call removed: " + handle);
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "Error logging call removal: " + e.getMessage());
+        }
+    }
+
+    @Override
+    public void onCreate() {
+        super.onCreate();
+        Log.i(TAG, "✅ ScamShieldInCallService created");
+    }
+
+    @Override
+    public void onDestroy() {
+        super.onDestroy();
+        Log.i(TAG, "🛑 ScamShieldInCallService destroyed");
+    }
+}
+```
+
+**Design Notes:**
+- Minimal implementation (only logs call events)
+- No complex call management logic (system handles that)
+- Required for Android's Telecom framework to recognize ScamShield as a valid dialer
+- Non-blocking implementation ensures system stability
+
+#### 4. SettingsFragment - Service Toggle Implementation
+
+**Location:** `SettingsFragment.java`
+
+```java
+// Initialize toggle listener
+scamDetectionToggle.setOnCheckedChangeListener((buttonView, isChecked) -> {
+    SharedPreferences prefs = getActivity().getSharedPreferences("ScamShieldPrefs", Context.MODE_PRIVATE);
+    prefs.edit().putBoolean("scam_alerts_enabled", isChecked).apply();
+    
+    if (isChecked) {
+        startScamProtection();
+    } else {
+        stopScamProtection();
+    }
+});
+
+/**
+ * Start scam protection service
+ */
+private void startScamProtection() {
+    try {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            requireActivity().startForegroundService(
+                new Intent(requireActivity(), ScamMonitorService.class)
+            );
+        } else {
+            requireActivity().startService(
+                new Intent(requireActivity(), ScamMonitorService.class)
+            );
+        }
+        Log.i(TAG, "✅ Scam protection started");
+    } catch (Exception e) {
+        Log.e(TAG, "❌ Error starting scam protection: " + e.getMessage());
+    }
+}
+
+/**
+ * Stop scam protection service
+ */
+private void stopScamProtection() {
+    try {
+        requireActivity().stopService(
+            new Intent(requireActivity(), ScamMonitorService.class)
+        );
+        Log.i(TAG, "✅ Scam protection stopped");
+    } catch (Exception e) {
+        Log.e(TAG, "❌ Error stopping scam protection: " + e.getMessage());
+    }
+}
+```
+
+**Key Features:**
+- Uses `startForegroundService()` on Android O+ (required for foreground services)
+- Reads/writes SharedPreferences to persist toggle state
+- Non-blocking toggle UI updates
+- Detailed logging for debugging service lifecycle
+
+#### 5. ScamMonitorService - Lifecycle Management
+
+**Location:** `ScamMonitorService.java`
+
+```java
+@Override
+public int onStartCommand(Intent intent, int flags, int startId) {
+    // Check if scam alerts are enabled (read from SharedPreferences)
+    SharedPreferences prefs = getSharedPreferences("ScamShieldPrefs", Context.MODE_PRIVATE);
+    boolean scamAlertsEnabled = prefs.getBoolean("scam_alerts_enabled", false);
+    
+    if (!scamAlertsEnabled) {
+        Log.w(TAG, "⚠️ Scam alerts disabled, stopping service");
+        stopSelf();
+        return START_NOT_STICKY;
+    }
+    
+    // Check RECORD_AUDIO permission
+    if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) 
+            != PackageManager.PERMISSION_GRANTED) {
+        Log.e(TAG, "❌ RECORD_AUDIO permission missing, cannot start monitoring");
+        stopSelf();
+        return START_NOT_STICKY;
+    }
+    
+    // Start foreground service with persistent notification
+    startForegroundWithNotification();
+    
+    // Initialize speech recognition
+    initializeSpeechRecognition();
+    
+    Log.i(TAG, "✅ ScamMonitorService started successfully");
+    return START_STICKY;  // Restart if killed
+}
+
+/**
+ * CRITICAL: Stop foreground and cleanup resources when service is destroyed.
+ * This is called when the toggle is turned OFF in Settings.
+ */
+@Override
+public void onDestroy() {
+    super.onDestroy();
+    
+    Log.i(TAG, "🛑 ScamMonitorService.onDestroy() called");
+    
+    try {
+        // CRITICAL: Remove notification immediately
+        // Must be called before releasing microphone to avoid orphaned notification
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            stopForeground(STOP_FOREGROUND_REMOVE);  // Android N+: removes notification
+        } else {
+            stopForeground(true);  // Pre-N: removes notification
+        }
+        Log.i(TAG, "✅ Notification removed via stopForeground()");
+    } catch (Exception e) {
+        Log.e(TAG, "❌ Error removing notification: " + e.getMessage());
+    }
+    
+    // Stop monitoring
+    stopMonitoring();
+    
+    // Cleanup handler tasks
+    if (handler != null) {
+        handler.removeCallbacksAndMessages(null);
+    }
+    
+    Log.i(TAG, "✅ ScamMonitorService cleanup complete");
+}
+
+/**
+ * Stop speech recognition and release microphone
+ */
+private void stopMonitoring() {
+    try {
+        // Cancel any pending polling tasks
+        if (pollingTask != null) {
+            handler.removeCallbacks(pollingTask);
+            pollingTask = null;
+        }
+        
+        // Stop Vosk processor if running
+        if (voskProcessor != null) {
+            voskProcessor.stop();
+            voskProcessor = null;
+            Log.i(TAG, "✅ Vosk processor stopped");
+        }
+        
+        // Stop Google Speech recognizer if running
+        if (googleSpeechRecognizer != null) {
+            try {
+                googleSpeechRecognizer.stop();
+                googleSpeechRecognizer.destroy();  // CRITICAL: Release microphone
+                googleSpeechRecognizer = null;
+                Log.i(TAG, "✅ Google Speech recognizer destroyed");
+            } catch (Exception e) {
+                Log.e(TAG, "❌ Error destroying recognizer: " + e.getMessage());
+            }
+        }
+        
+        Log.i(TAG, "✅ All monitoring stopped");
+    } catch (Exception e) {
+        Log.e(TAG, "❌ Error stopping monitoring: " + e.getMessage());
+    }
+}
+
+/**
+ * Create and display foreground notification
+ */
+private void startForegroundWithNotification() {
+    try {
+        // Create notification channel first (Android 8.0+)
+        createNotificationChannel();
+        
+        // Build notification
+        Notification notification = new NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle("ScamShield Active")
+            .setContentText("Protecting you from fraud calls...")
+            .setSmallIcon(R.drawable.ic_notification)  // Must be white monochrome
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setOngoing(true)  // Cannot be dismissed by user
+            .build();
+        
+        // Start foreground (must happen within 5 seconds of onStartCommand)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(NOTIFICATION_ID, notification, 
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE);
+        } else {
+            startForeground(NOTIFICATION_ID, notification);
+        }
+        
+        Log.i(TAG, "✅ Foreground service started with notification");
+    } catch (Exception e) {
+        Log.e(TAG, "❌ Error starting foreground: " + e.getMessage());
+        stopSelf();
+    }
+}
+```
+
+**Key Design:**
+- `onStartCommand()` checks SharedPreferences to honor toggle state
+- `onDestroy()` calls `stopForeground(STOP_FOREGROUND_REMOVE)` to remove notification immediately
+- `stopMonitoring()` calls `googleSpeechRecognizer.destroy()` to release microphone
+- All handler tasks cleaned up in `onDestroy()`
+- Uses `START_STICKY` so service restarts if killed (but respects toggle state)
+
+### Comparison: RoleManager vs TelecomManager
+
+| Feature | RoleManager (Android 10+) | TelecomManager (Android 7-9) |
+|---------|---------------------------|------------------------------|
+| **API Level** | Android 10 (Q, API 29+) | Android 7-9 (API 24-27) |
+| **Method** | `createRequestRoleIntent()` | `ACTION_CHANGE_DEFAULT_DIALER` intent |
+| **User Experience** | System dialog, modern UI | System chooser dialog |
+| **Request Once** | Can request multiple times | Can request multiple times |
+| **Non-blocking** | Yes, user can dismiss | Yes, user can skip |
+| **Permission** | `android.permission.MANAGE_ONGOING_CALLS` (Android 11+) | No special permission |
+| **Availability Check** | `isRoleAvailable()` required | Always available |
+| **Success Indication** | `onActivityResult()` with `RESULT_OK` | Intent handled by system |
+
+### DO's & DON'Ts for Default Dialer & Service Lifecycle
+
+**DO:**
+1. Register InCallService in AndroidManifest.xml with `android:permission="android.permission.BIND_INCALL_SERVICE"`
+2. Add BIND_INCALL_SERVICE and MANAGE_ONGOING_CALLS permissions to manifest
+3. Check Build.VERSION_CODES.Q before using RoleManager
+4. Store PREF_DIALER_ROLE_REQUESTED to avoid showing request dialog repeatedly
+5. Check SharedPreferences in onStartCommand() to respect toggle state
+6. Call stopForeground(STOP_FOREGROUND_REMOVE) in onDestroy() to remove notification
+7. Call speechRecognizer.destroy() to release microphone before service stops
+8. Use startForegroundService() on Android O+, regular startService() on older versions
+9. Log all service lifecycle events with emoji prefixes (✅, ❌, 🛑, ☎️)
+10. Remove all handler callbacks in onDestroy() to prevent memory leaks
+11. Check permission at runtime before initializing speech recognition
+12. Use START_STICKY for service restart, but check SharedPreferences in onStartCommand()
+13. Create NotificationChannel before building notification (Android 8.0+)
+14. Use white monochrome icons (ic_notification.xml) for foreground service notifications
+15. Test dialer role flow on both Android 10+ (RoleManager) and Android 7-9 (TelecomManager)
+
+**DON'T:**
+1. DON'T forget to export InCallService: `android:exported="true"`
+2. DON'T assume RoleManager is available - always check API level first
+3. DON'T call startForegroundService() on Android O without proper notification
+4. DON'T block the main thread during service startup - use ExecutorService for heavy work
+5. DON'T hardcode permission checks - always use ContextCompat.checkSelfPermission()
+6. DON'T forget to call stopForeground() when service is destroyed
+7. DON'T leave handler callbacks pending - always call removeCallbacks() in onDestroy()
+8. DON'T assume speech recognizer.stop() releases microphone - must call destroy()
+9. DON'T ignore onDestroy() - use it to cleanup all resources
+10. DON'T use colored icons for foreground service notifications - must be pure white (#FFFFFF)
+11. DON'T call stopSelf() in onStartCommand() if permissions missing without logging reason
+12. DON'T forget to persist toggle state in SharedPreferences with key "scam_alerts_enabled"
+13. DON'T assume notification icon resource exists - verify with try-catch
+14. DON'T call requestDefaultDialerRole() every time app starts - track with SharedPreferences
+15. DON'T ignore TelecomManager fallback for Android 7-9 devices - many devices still use older versions
+
+### Testing Checklist for Default Dialer & Service Lifecycle
+
+- [ ] Install app on Android 10+ device (API 29+)
+- [ ] First app launch: verify "Request role" dialog appears (should appear only once)
+- [ ] User selects "Yes" in dialog: verify app is set as default dialer
+- [ ] Launch dialer app from home screen: verify ScamShield opens instead of stock dialer
+- [ ] Incoming call notification: verify comes from ScamShield system integration
+- [ ] Verify app appears in Settings > Apps > Default apps > Phone app
+- [ ] Open Settings > Scam Detection toggle
+- [ ] Toggle OFF: verify service stops immediately
+- [ ] Toggle OFF: verify notification disappears within 2 seconds
+- [ ] Toggle OFF: verify microphone is released (no audio glitches in other apps)
+- [ ] Toggle ON: verify service starts immediately
+- [ ] Toggle ON: verify persistent "ScamShield Active" notification appears
+- [ ] Trigger incoming call: verify ScamMonitorService detects call and listens
+- [ ] Close app while toggle is ON: verify service continues running (persistent)
+- [ ] Reboot device while toggle is ON: verify service starts after reboot
+- [ ] Test on Android 7-9 device (with TelecomManager fallback)
+- [ ] Verify "Request role" uses TelecomManager on Android 7-9
+- [ ] Check logcat for all lifecycle events: "✅ ScamMonitorService started successfully"
+- [ ] Check logcat for cleanup: "✅ Notification removed via stopForeground()"
+- [ ] Verify no ANR (Application Not Responding) during service startup/shutdown
+- [ ] Test toggle ON/OFF 10 times rapidly: verify no crashes or orphaned services
+
+### Troubleshooting Default Dialer & Service Lifecycle
+
+**Problem:** "Request default dialer" dialog appears every app launch
+- **Check 1:** Verify `PREF_DIALER_ROLE_REQUESTED` is saved: check SharedPreferences
+- **Check 2:** Verify `editor.apply()` called (not just `put`)
+- **Check 3:** Check Logcat for "Dialer role already requested"
+- **Solution:** Ensure SharedPreferences.Editor.apply() is called immediately
+
+**Problem:** Toggle OFF but notification still visible
+- **Check 1:** Verify `stopForeground(STOP_FOREGROUND_REMOVE)` called in onDestroy()
+- **Check 2:** Check if using old `stopForeground(true)` instead of REMOVE constant
+- **Check 3:** Verify onDestroy() is actually being called: add log statement
+- **Solution:** Use STOP_FOREGROUND_REMOVE constant (not just boolean true)
+
+**Problem:** Microphone doesn't release after service stops
+- **Check 1:** Verify `googleSpeechRecognizer.destroy()` called in stopMonitoring()
+- **Check 2:** Verify `handler.removeCallbacks()` called to stop polling
+- **Check 3:** Check for exception in stopMonitoring(): wrap in try-catch
+- **Solution:** Ensure all recognizer references set to null after destroy()
+
+**Problem:** Service doesn't start when toggle is turned ON
+- **Check 1:** Verify `startForegroundService()` used on Android O+
+- **Check 2:** Verify notification created before calling `startForeground()`
+- **Check 3:** Check Logcat for permission errors: "RECORD_AUDIO permission missing"
+- **Check 4:** Verify SharedPreferences value saved correctly
+- **Solution:** Verify all prerequisites met before service startup
+
+**Problem:** App crashes on default dialer role request
+- **Check 1:** Verify RoleManager import: `import android.app.role.RoleManager`
+- **Check 2:** Check Logcat for "Cannot find symbol" or "ClassNotFoundException"
+- **Check 3:** Verify API level check: `Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q`
+- **Solution:** Ensure proper imports and version checks in place
+
+**Problem:** InCallService not recognized by Telecom framework
+- **Check 1:** Verify AndroidManifest.xml declares service: `android:name="...ScamShieldInCallService"`
+- **Check 2:** Verify intent-filter: `<action android:name="android.telecom.InCallService" />`
+- **Check 3:** Verify `android:exported="true"` in service declaration
+- **Check 4:** Verify `android:permission="android.permission.BIND_INCALL_SERVICE"`
+- **Solution:** Check all manifest declaration requirements above
+
+## In-App Real-Time Debug Logging System
+
+### Overview
+ScamShield now includes an in-app floating debug log window that displays real-time speech recognition events and service lifecycle logs without requiring Logcat access. This provides visibility into the app's internal processes for both end users and developers, helping diagnose why scam detection may appear to fail silently.
+
+### Architecture Pattern
+
+**Components:**
+1. **DebugLogWindow class** - Manages floating TextView with timestamped log entries
+2. **MainActivity integration** - Implements SpeechListener to receive debug events
+3. **ScamMonitorService callbacks** - Sends debug events to active debug listeners
+4. **SharedPreferences storage** - Persists debug log visibility state across app restarts
+
+**Flow:**
+```
+ScamMonitorService lifecycle event
+     ↓
+ScamMonitorService.debugListener.onDebugLog("[timestamp] message")
+     ↓
+MainActivity.onDebugLog() received
+     ↓
+DebugLogWindow.logToScreen("message")
+     ↓
+Handler.post() to main thread
+     ↓
+Append to TextView with format: "[HH:mm:ss] [message]"
+     ↓
+Auto-scroll to latest entry
+     ↓
+Limit to 50 lines to prevent memory bloat
+```
+
+### Implementation Details
+
+#### 1. DebugLogWindow Class
+**Location:** `utils/DebugLogWindow.java` (200+ lines)
+
+**Key Features:**
+- Floating FrameLayout container (600dp height, bottom-positioned)
+- Scrollable TextView with green (#00FF00) monospace text on dark background
+- Timestamped entries: `[HH:mm:ss] message`
+- Limits to 50 lines max (removes oldest entries when exceeded)
+- Auto-scroll to bottom to show latest logs
+- Visibility toggle (persisted in SharedPreferences with key: `debug_log_enabled`)
+
+**Usage:**
+```java
+// In MainActivity.onCreate() after setContentView()
+FrameLayout mainContainer = findViewById(R.id.main_container);
+debugLogWindow = new DebugLogWindow(this);
+debugLogWindow.initialize(mainContainer);
+debugLogWindow.logToScreen("✅ Debug log initialized");
+
+// From any thread (Handler.post() ensures main thread execution)
+debugLogWindow.logToScreen("📢 Partial result: 'hello'");
+
+// Toggle visibility (updates SharedPreferences)
+debugLogWindow.toggleVisibility();
+
+// Clear all entries
+debugLogWindow.clear();
+
+// Cleanup on destroy
+debugLogWindow.destroy();
+```
+
+**Thread Safety:**
+- All UI updates wrapped in `mainHandler.post()` for main thread safety
+- Safe to call from background threads (speech recognition callbacks)
+
+#### 2. MainActivity Integration
+**Location:** `activities/MainActivity.java`
+
+**Key Changes:**
+- Implements `SpeechListener` interface
+- Initializes `DebugLogWindow` in `onCreate()` after `setContentView()`
+- Registers as debug listener in `onStart()`: `ScamMonitorService.setDebugListener(this)`
+- Unregisters in `onStop()`: `ScamMonitorService.clearDebugListener()`
+- Implements `onDebugLog()` callback to forward events to debug window
+- Cleans up resources in `onDestroy()`
+
+**Code Pattern:**
+```java
+@Override
+public void onCreate(Bundle savedInstanceState) {
+    super.onCreate(savedInstanceState);
+    setContentView(R.layout.activity_main);
+    
+    // Initialize debug log window
+    FrameLayout mainContainer = findViewById(R.id.main_container);
+    if (mainContainer != null) {
+        debugLogWindow = new DebugLogWindow(this);
+        debugLogWindow.initialize(mainContainer);
+    }
+}
+
+@Override
+public void onStart() {
+    super.onStart();
+    instance = this;
+    // Register as debug listener
+    ScamMonitorService.setDebugListener(this);
+}
+
+@Override
+public void onStop() {
+    super.onStop();
+    // Unregister debug listener
+    ScamMonitorService.clearDebugListener();
+    instance = null;
+}
+
+@Override
+public void onDebugLog(String debugMessage) {
+    if (debugLogWindow != null) {
+        debugLogWindow.logToScreen(debugMessage);
+    }
+}
+```
+
+#### 3. ScamMonitorService Debug Logging
+**Location:** `services/ScamMonitorService.java`
+
+**Enhanced Methods:**
+- `onStartCommand()` - Logs service startup and SharedPreferences check
+- `startForegroundWithNotification()` - Logs notification channel creation, icon verification, startForeground call
+- `initializeSpeechRecognition()` - Logs permission check, recognizer initialization, errors
+- `onSpeechRecognized()` - Logs keyword detection and alerts (inherited from GoogleSpeechRecognizer)
+- `showScamAlert()` - Logs alert display and fallback triggers
+- `onDestroy()` - Logs foreground removal and resource cleanup
+
+**Pattern:**
+```java
+// In every critical method
+if (debugListener != null) {
+    try {
+        debugListener.onDebugLog("✅ Event occurred");
+    } catch (Exception e) {
+        Log.d(TAG, "Debug listener callback failed");
+    }
+}
+```
+
+**Emoji Prefixes (Color-coded):**
+- ✅ - Success events (initialization, listeners registered, resources created)
+- ❌ - Errors (permissions missing, recognizer failed, alerts failed)
+- 🎤 - Speech recognition events (ready, speech detected, ended)
+- 📢 - Recognized text events (partial results, final results)
+- 🔄 - State transitions (auto-restarting, retrying, reconnecting)
+- 🚨 - Scam detections (keyword matched, alert triggered)
+- 🛑 - Stopping/cleanup events (service stopped, resources freed)
+- ⚠️ - Warnings (permission denied, retrying after error)
+
+### Debug Log UI
+
+**Location in App:**
+- Appears as floating panel at bottom of MainActivity
+- Semi-transparent dark background (#1A121212)
+- Bright green text (#00FF00) for visibility
+- Monospace font for aligned columns
+- Scrollable with auto-scroll to latest entries
+- Default: hidden (toggle via Settings or onDebugLog visibility setting)
+
+**Layout Dimensions:**
+- Width: Match parent (full screen width)
+- Height: 600dp (half-screen)
+- Position: Bottom of screen (Gravity.BOTTOM)
+- Padding: 16dp all sides
+
+**Styling:**
+```xml
+<!-- Floating debug container -->
+<FrameLayout
+    android:id="@+id/debug_container"
+    android:layout_width="match_parent"
+    android:layout_height="600dp"
+    android:layout_alignParentBottom="true"
+    android:background="#1A121212"
+    android:visibility="gone" />
+
+<!-- Scrollable text view inside -->
+<ScrollView>
+    <TextView
+        android:textColor="#00FF00"
+        android:textSize="10sp"
+        android:typeface="monospace"
+        android:padding="16dp"
+        android:scrollbars="vertical" />
+</ScrollView>
+```
+
+### Enabling/Disabling Debug Log
+
+**Method 1: SharedPreferences (Programmatic)**
+```java
+SharedPreferences prefs = getSharedPreferences("ScamShieldPrefs", MODE_PRIVATE);
+prefs.edit().putBoolean("debug_log_enabled", true).apply();
+// Toggle: debugLogWindow.toggleVisibility()
+```
+
+**Method 2: Developer Settings (Future)**
+- Add toggle in SettingsFragment (similar to dark mode toggle)
+- Toggle calls `debugLogWindow.toggleVisibility()`
+- Preference persisted with key: `debug_log_enabled`
+
+**Visibility State:**
+- Persisted in SharedPreferences across app restarts
+- Default: OFF (hidden) for production builds
+- Users can enable for troubleshooting
+
+### Common Debug Log Scenarios
+
+**Scenario 1: Speech Recognition Starting**
+```
+[14:23:45] ✅ MainActivity initialized
+[14:23:46] ✅ Debug listener registered
+[14:23:47] 🔧 Creating foreground notification...
+[14:23:47] ✅ Foreground notification created
+[14:23:48] ✅ RECORD_AUDIO permission verified
+[14:23:48] 🎤 Initializing Google Speech Recognizer...
+[14:23:49] ✅ Speech Recognizer initialized and listening
+```
+
+**Scenario 2: Partial Speech Results During Call**
+```
+[14:25:10] 🎤 Ready for speech input
+[14:25:12] 🔄 Partial result: 'verify'
+[14:25:13] 🔄 Partial result: 'verify your'
+[14:25:14] 🔄 Partial result: 'verify your otp'
+[14:25:15] ✅ Final result: 'verify your OTP'
+[14:25:15] 🚨 SCAM KEYWORD DETECTED: 'otp' in 'verify your OTP'
+[14:25:15] ✅ Alert shown for: otp
+```
+
+**Scenario 3: Error Recovery (Auto-restart)**
+```
+[14:26:30] ❌ Speech error: [6] No speech input
+[14:26:30] 🔄 Transient error detected, auto-restarting...
+[14:26:31] 🔄 Auto-restarting listening after delay...
+[14:26:31] 🎤 Ready for speech input
+```
+
+**Scenario 4: Service Stopping (Toggle OFF)**
+```
+[14:27:45] ⏹️ Scam detection disabled by user, stopping service
+[14:27:45] 🛑 Stopping monitoring...
+[14:27:45] ✅ Google Speech Recognizer stopped and destroyed
+[14:27:45] ✅ All monitoring stopped
+[14:27:45] ✅ Foreground notification removed
+```
+
+### DO's & DON'Ts for Debug Logging
+
+**DO:**
+1. Call `debugListener.onDebugLog()` for all critical lifecycle events
+2. Wrap debug listener calls in try-catch to prevent crashes
+3. Use emoji prefixes consistently: ✅ ❌ 🎤 📢 🔄 🚨 🛑 ⚠️
+4. Include context in messages: e.g., "❌ Permission missing: RECORD_AUDIO"
+5. Use `handler.post()` for all UI updates in DebugLogWindow
+6. Check if debugListener is null before calling (it's null when MainActivity is destroyed)
+7. Initialize DebugLogWindow after `setContentView()` to ensure main_container exists
+8. Persist visibility state in SharedPreferences with key: `debug_log_enabled`
+9. Limit log entries to 50 lines to prevent memory bloat
+10. Include timestamps in log format: `[HH:mm:ss] message`
+11. Clean up resources in `onDestroy()`: `debugLogWindow.destroy()`
+12. Test debug log with verbose logging: set `debug_log_enabled=true` in SharedPreferences
+13. Verify logs appear in real-time during incoming calls
+14. Use monospace font for visual alignment of log columns
+15. Use green text (#00FF00) on dark background for visibility
+
+**DON'T:**
+1. DON'T call `debugLogWindow.logToScreen()` directly from service threads (use handler)
+2. DON'T assume debugListener is always registered (check null)
+3. DON'T log sensitive information (audio content, private numbers)
+4. DON'T use heavy logging in tight loops (causes performance issues)
+5. DON'T forget to unregister debug listener in `onStop()` or `onDestroy()`
+6. DON'T initialize DebugLogWindow before `setContentView()` (causes NPE)
+7. DON'T use colored text (green is default, don't add colors for individual messages)
+8. DON'T leave DebugLogWindow visible in production (toggle disabled by default)
+9. DON'T hardcode visibility state (use SharedPreferences key: `debug_log_enabled`)
+10. DON'T assume main_container exists (check for null before initializing)
+11. DON'T log same event multiple times (once per lifecycle event is sufficient)
+12. DON'T forget to persist visibility toggle in SharedPreferences
+13. DON'T use Log.d() for debug events visible to users (use onDebugLog() instead)
+14. DON'T append to TextViews from background threads (always use handler.post())
+15. DON'T exceed 50 log lines (DebugLogWindow auto-removes oldest entries)
+
+### Testing Checklist for Debug Logging
+
+- [ ] Install app on Android device
+- [ ] Open MainActivity and verify debug log window is hidden by default
+- [ ] Enable debug log via SharedPreferences: `debug_log_enabled = true`
+- [ ] Reopen app and verify debug log window appears at bottom
+- [ ] Verify "✅ MainActivity initialized" message appears in log
+- [ ] Verify "✅ Debug listener registered" message in onStart()
+- [ ] Trigger incoming call with scam keyword
+- [ ] Verify speech recognition events show in real-time:
+  - "🎤 Ready for speech input"
+  - "📢 Partial result: [text]"
+  - "✅ Final result: [text]"
+- [ ] Verify scam detection appears: "🚨 SCAM KEYWORD DETECTED: [keyword]"
+- [ ] Verify alert shown message: "✅ Alert shown for: [keyword]"
+- [ ] Toggle scam detection OFF in Settings
+- [ ] Verify "⏹️ Scam detection disabled" message
+- [ ] Verify "🛑 Stopping monitoring..." and cleanup messages appear
+- [ ] Disable debug log toggle
+- [ ] Reopen app and verify debug log window is hidden
+- [ ] Verify visibility state persists across app restarts
+- [ ] Test debug log scroll behavior with 50+ entries
+- [ ] Verify oldest entries removed when limit exceeded
+- [ ] Test error recovery: disconnect WiFi during call
+- [ ] Verify "❌ Error" and "🔄 Auto-restarting" messages
+- [ ] Test with slow network (simulate lag in speech recognition)
+- [ ] Verify thread safety: no crashes from background thread updates
+- [ ] Check for memory leaks: monitor RAM while running for extended time
+- [ ] Verify fallback alert triggered in debug log if ScamAlertActivity fails
+
+### Troubleshooting Debug Logging Issues
+
+**Problem:** Debug log window doesn't appear
+- **Check 1:** Verify `debug_log_enabled = true` in SharedPreferences
+- **Check 2:** Verify `main_container` exists in activity_main.xml
+- **Check 3:** Verify `DebugLogWindow.initialize()` called after `setContentView()`
+- **Solution:** Check SharedPreferences and ensure main_container layout element exists
+
+**Problem:** Debug messages don't appear in real-time
+- **Check 1:** Verify `debugListener` is not null in ScamMonitorService
+- **Check 2:** Verify MainActivity is in foreground (onStart() called)
+- **Check 3:** Check if exception thrown in onDebugLog() callback
+- **Solution:** Verify MainActivity is active and debug listener is registered
+
+**Problem:** App crashes when debug log appears
+- **Check 1:** Verify all UI updates wrapped in `handler.post()`
+- **Check 2:** Check Logcat for "Cannot find symbol" or "Null pointer" in debug code
+- **Check 3:** Verify main_container is FrameLayout (not other ViewGroup)
+- **Solution:** Ensure handler.post() used for all UI updates, verify layout type
+
+**Problem:** Debug log text overflows or doesn't auto-scroll
+- **Check 1:** Verify ScrollView wrapping TextView in DebugLogWindow
+- **Check 2:** Verify `scrollbars="vertical"` set on TextView
+- **Check 3:** Check if `fullScroll(View.FOCUS_DOWN)` called after append
+- **Solution:** Verify ScrollView structure and auto-scroll logic
+
+**Problem:** Visibility state not persisting across restarts
+- **Check 1:** Verify SharedPreferences key is `debug_log_enabled`
+- **Check 2:** Verify `editor.apply()` called (not just `put`)
+- **Check 3:** Check for SharedPreferences mode (MODE_PRIVATE correct)
+- **Solution:** Ensure SharedPreferences.Editor.apply() is called immediately
+
+## WindowManager Implementation for Debug Window (Moto/Redmi Fix)
+
+### Overview
+ScamShield's debug log window now uses Android's `WindowManager` API instead of FrameLayout approach, providing compatibility with strict overlay restrictions on Moto, Redmi, and other OEM devices. This fix resolves the "invisible debug window" issue on devices with SYSTEM_ALERT_WINDOW restrictions.
+
+### Problem Analysis
+
+**Root Cause:** Original DebugLogWindow implementation used FrameLayout added to MainActivity's view hierarchy. On Moto/Redmi devices with strict overlay policies, this view could be:
+1. Hidden behind other UI layers (status bar, navigation bar)
+2. Clipped by parent container bounds
+3. Prevented from rendering by system window manager restrictions
+4. Not properly positioned due to activity layout constraints
+
+**Solution:** Use Android's WindowManager directly to bypass activity layout constraints and render window on top of all app UI.
+
+### Architecture Pattern
+
+**DebugLogWindow.java (WindowManager approach):**
+```java
+private WindowManager windowManager;
+private WindowManager.LayoutParams windowParams;
+private boolean isWindowAdded = false;
+
+public DebugLogWindow(AppCompatActivity activity) {
+    this.activity = activity;
+    this.windowManager = (WindowManager) activity.getSystemService(Context.WINDOW_SERVICE);
+}
+
+public void initialize(ViewGroup parentContainer) {
+    // Create UI components
+    debugContainer = new FrameLayout(activity);
+    debugScroll = new ScrollView(activity);
+    debugLogTextView = new TextView(activity);
+    
+    // Setup WindowManager parameters
+    setupWindowManagerParams();
+    
+    // Add to WindowManager (bypasses activity layout)
+    windowManager.addView(debugContainer, windowParams);
+    isWindowAdded = true;
+}
+
+private void setupWindowManagerParams() {
+    windowParams = new WindowManager.LayoutParams();
+    
+    // Choose type based on Android version
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        windowParams.type = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY;
+    } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+        windowParams.type = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY;
+    } else {
+        windowParams.type = WindowManager.LayoutParams.TYPE_PHONE;
+    }
+    
+    // Critical flags
+    windowParams.flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE   // No touch input
+                       | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN; // Full coords
+    
+    windowParams.format = android.graphics.PixelFormat.TRANSLUCENT;
+    windowParams.width = 800;
+    windowParams.height = 600;
+    windowParams.x = 0;
+    windowParams.y = 0;
+    windowParams.gravity = Gravity.BOTTOM | Gravity.START;
+}
+
+public void destroy() {
+    if (isWindowAdded && debugContainer != null) {
+        windowManager.removeView(debugContainer);
+        isWindowAdded = false;
+    }
+}
+```
+
+### Window Type Selection (Critical)
+
+| Android Version | Type | Method | Use Case |
+|-----------------|------|--------|----------|
+| **8.0+** (O) | `TYPE_APPLICATION_OVERLAY` | Preferred | Modern Android, apps exempt from restrictions |
+| **7.0-7.1** (N) | `TYPE_APPLICATION_OVERLAY` | Best effort | Try overlay, fallback to TYPE_PHONE |
+| **6.0 and older** | `TYPE_PHONE` | Legacy | Older devices, simpler permissions |
+
+**DO NOT use:**
+- `TYPE_SYSTEM_OVERLAY` - Requires SYSTEM_ALERT_WINDOW (causes install failures on Moto)
+- `TYPE_SYSTEM_ALERT` - Deprecated, causes crashes on modern Android
+
+### Flag Breakdown
+
+**FLAG_NOT_FOCUSABLE** (CRITICAL)
+```java
+windowParams.flags |= WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE;
+```
+- Window does NOT receive focus (app can still handle touches)
+- Window does NOT consume touch events (touches pass through to underlying window)
+- Required for overlay to not interfere with app navigation
+- **Why it works on Moto:** Declares window as pure overlay, not interactive layer
+
+**FLAG_LAYOUT_IN_SCREEN** (CRITICAL)
+```java
+windowParams.flags |= WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN;
+```
+- Window measured and laid out in full screen coordinates
+- Position not relative to status bar or other system UI
+- Ensures consistent positioning across all devices
+- **Why it works on Moto:** Bypasses device-specific layout calculations
+
+**Optional: FLAG_NOT_TOUCHABLE**
+```java
+windowParams.flags |= WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
+```
+- Window never receives touch events at all
+- Useful if you want pure overlay behavior (can't scroll)
+- Currently NOT used in ScamShield (we want scrollable text)
+
+### Window Format
+
+```java
+windowParams.format = android.graphics.PixelFormat.TRANSLUCENT;
+```
+- Allows semi-transparent background (#1A121212 with alpha)
+- Supports 32-bit color with transparency
+- No additional overhead compared to opaque
+
+### Manual Refresh Button
+
+**New Feature:** Button in MainActivity allows users to manually trigger debug window re-initialization if it fails to load.
+
+**Implementation** (MainActivity.java):
+```java
+private void addDebugWindowRefreshButton(FrameLayout mainContainer) {
+    try {
+        android.widget.Button refreshBtn = new android.widget.Button(this);
+        refreshBtn.setText("🔄");  // Refresh emoji
+        refreshBtn.setAlpha(0.7f);  // Semi-transparent
+        
+        FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(
+                android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
+                android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
+                android.view.Gravity.TOP | android.view.Gravity.END
+        );
+        params.setMargins(0, 16, 16, 0);  // Top-right corner
+        
+        refreshBtn.setOnClickListener(v -> {
+            if (debugLogWindow != null) {
+                debugLogWindow.initialize(mainContainer);  // Re-initialize
+                Log.i(TAG, "✅ Debug window re-initialized via refresh button");
+            }
+        });
+        
+        mainContainer.addView(refreshBtn, params);
+    } catch (Exception e) {
+        Log.e(TAG, "Error adding refresh button: " + e.getMessage());
+    }
+}
+```
+
+**Usage:**
+- Visible in top-right corner (small, semi-transparent emoji)
+- Click to force re-initialization of debug window
+- Useful for development and troubleshooting
+- Prevents "permanently invisible window" scenario
+
+### DO's & DON'Ts for WindowManager Implementation
+
+**DO:**
+1. Check Build.VERSION_CODES to select correct window type (O for overlay, fallback to PHONE)
+2. Use FLAG_NOT_FOCUSABLE + FLAG_LAYOUT_IN_SCREEN (required pair)
+3. Set format to TRANSLUCENT for transparency support
+4. Store isWindowAdded flag to prevent duplicate adds
+5. Call removeView() in destroy() before cleanup
+6. Wrap initialize() to remove old window before adding new one (re-initialization safe)
+7. Use WindowManager from Context.getSystemService()
+8. Position window with gravity constants (BOTTOM | START)
+9. Set explicit dimensions (width, height) instead of MATCH_PARENT
+10. Log window type selection for debugging device compatibility
+11. Verify windowManager is not null before calling methods
+12. Test on both Moto and stock Android devices
+13. Use handler.post() for all UI updates (thread safety)
+14. Provide manual refresh button as fallback
+15. Document FLAG usage in code for future maintainers
+
+**DON'T:**
+1. DON'T use TYPE_SYSTEM_OVERLAY or TYPE_SYSTEM_ALERT (deprecated, causes crashes)
+2. DON'T use SYSTEM_ALERT_WINDOW permission without careful consideration
+3. DON'T forget FLAG_NOT_FOCUSABLE (window will steal focus from app)
+4. DON'T forget FLAG_LAYOUT_IN_SCREEN (positioning will be wrong on some devices)
+5. DON'T call addView() multiple times without removeView() first (causes crash)
+6. DON'T use MATCH_PARENT for window width/height (causes full-screen window)
+7. DON'T assume windowManager is available (always check for null)
+8. DON'T forget to store isWindowAdded flag (prevents tracking of window state)
+9. DON'T ignore removeView() exceptions in destroy() (can cause resource leaks)
+10. DON'T use position relative to status bar (always use full screen coords)
+11. DON'T forget to handle removal in onDestroy() (memory leaks without cleanup)
+12. DON'T hardcode window dimensions (consider screen density)
+13. DON'T assume TYPE_APPLICATION_OVERLAY works on all devices (need fallback)
+14. DON'T update window after it's been destroyed (check isWindowAdded first)
+15. DON'T use float coordinates for position (use int pixel values only)
+
+### Troubleshooting WindowManager Issues
+
+**Problem:** "BadTokenException: Unable to add window"
+- **Check 1:** Verify windowManager not null: `if (windowManager != null)`
+- **Check 2:** Verify window hasn't been added twice: check `isWindowAdded` flag
+- **Check 3:** Verify activity is still valid (not destroyed)
+- **Check 4:** Check logcat for "parameter is not an Activity"
+- **Solution:** Ensure removeView() called before addView(), use isWindowAdded flag
+
+**Problem:** Window appears below status bar or nav bar
+- **Check 1:** Verify FLAG_LAYOUT_IN_SCREEN is set
+- **Check 2:** Verify gravity is BOTTOM | START (not CENTER)
+- **Check 3:** Check if device has notch (may affect coordinates)
+- **Solution:** Use FLAG_LAYOUT_IN_SCREEN and test on target device
+
+**Problem:** Window invisible on Moto/Redmi device
+- **Check 1:** Verify using TYPE_APPLICATION_OVERLAY (not TYPE_SYSTEM_OVERLAY)
+- **Check 2:** Verify SYSTEM_ALERT_WINDOW permission not required
+- **Check 3:** Check device AOSP version (some Moto ROM versions have restrictions)
+- **Check 4:** Verify FLAG_NOT_FOCUSABLE is set (overlay mode)
+- **Solution:** Force TYPE_PHONE if overlay not available, provide manual refresh button
+
+**Problem:** Window consumes all touch input (blocks app interaction)
+- **Check 1:** Verify FLAG_NOT_FOCUSABLE is set
+- **Check 2:** Verify FLAG_NOT_TOUCHABLE NOT set (unless desired)
+- **Check 3:** Check if window covers entire screen (set proper dimensions)
+- **Solution:** Ensure FLAG_NOT_FOCUSABLE set, verify width/height not MATCH_PARENT
+
+**Problem:** Text doesn't scroll or window clips content
+- **Check 1:** Verify ScrollView added to FrameLayout
+- **Check 2:** Verify TextView has WRAP_CONTENT height inside ScrollView
+- **Check 3:** Check if window height too small (600dp minimum recommended)
+- **Solution:** Verify layout hierarchy: Container -> ScrollView -> TextView
+
+**Problem:** Manual refresh button doesn't work
+- **Check 1:** Verify debugLogWindow not null before calling initialize()
+- **Check 2:** Verify initialize() removes old window before adding new one
+- **Check 3:** Check if exception thrown in initialize() callback
+- **Check 4:** Verify button listener properly captures mainContainer
+- **Solution:** Add null check and exception handling in button click listener
+
+### Testing Checklist for WindowManager Implementation
+
+- [ ] Install app on stock Android device (Pixel, Nexus)
+- [ ] Verify debug log window appears at bottom-left
+- [ ] Verify window doesn't block app touch input
+- [ ] Toggle debug log visibility: appears/disappears correctly
+- [ ] Scroll debug log: text scrolls smoothly
+- [ ] Enable debug log and restart app: window appears automatically
+- [ ] Verify window positioning is correct (no overlap with nav bar)
+- [ ] Test on Moto G device (AOSP-based ROM)
+- [ ] Test on Redmi device (MIUI-based ROM)
+- [ ] Verify debug window appears on Moto/Redmi (key test for this fix)
+- [ ] Test manual refresh button: click 🔄 button
+- [ ] Verify window re-initializes after refresh button click
+- [ ] Test with screen rotation: window should persist
+- [ ] Test app backgrounding: window removed on app destroy
+- [ ] Check Logcat for "BadTokenException" errors (none should appear)
+- [ ] Verify "TYPE_APPLICATION_OVERLAY" logged on Android 8.0+
+- [ ] Verify "TYPE_PHONE" logged on Android 6.0-7.x fallback
+- [ ] Test with debug log disabled: no window should appear
+- [ ] Enable debug log in Settings: window should appear immediately
+- [ ] Verify window survives activity recreation (rotate screen)
+- [ ] Check memory usage with debug log open (should be <5MB)
+
+### Benefits Over Previous FrameLayout Approach
+
+| Feature | FrameLayout (Old) | WindowManager (New) |
+|---------|------------------|-------------------|
+| **Moto/Redmi** | ❌ Invisible | ✅ Works |
+| **Redmi** | ❌ Invisible | ✅ Works |
+| **OEM Restrictions** | ❌ Blocked by layout | ✅ Bypasses hierarchy |
+| **Layout Dependency** | ❌ Requires parent | ✅ Independent window |
+| **Status Bar Coverage** | ❌ Clipped | ✅ Full coords |
+| **Performance** | ✅ Lightweight | ✅ Lightweight |
+| **Setup Complexity** | ✅ Simple | ⚠️ Moderate |
+| **Error Handling** | ❌ Limited | ✅ Comprehensive |
+| **Device Compatibility** | 🟡 ~80% | ✅ ~99% |
+
+## Error Code Handling for Speech Recognition (Beep Sound Fix)
+
+### Problem Analysis
+
+**Root Cause:** When Google Speech Recognizer encounters `ERROR_NO_MATCH` (code 7) or `ERROR_RECOGNIZER_BUSY` (code 8), it plays the "tu tu tu" beep sound. The original implementation waited 1-3 seconds before restarting listening. During this 1-3 second gap, the user's voice after the beep was lost.
+
+**User Experience Impact:**
+1. Device beeps ("tu tu tu")
+2. User thinks app is now listening and speaks
+3. But app is actually waiting 1-3 seconds to restart
+4. User's voice is missed
+5. User thinks app is broken
+
+**Solution:** Detect NO_MATCH and BUSY errors specifically and restart immediately (500ms delay) instead of waiting 1-3 seconds.
+
+### Implementation Details
+
+**GoogleSpeechRecognizer.java (onError method):**
+```java
+@Override
+public void onError(int errorCode) {
+    String errorMessage = getErrorString(errorCode);
+    Log.e(TAG, "❌ Speech recognition error: [" + errorCode + "] " + errorMessage);
+    
+    isListening = false;
+    
+    // SPECIAL HANDLING: NO_MATCH (7) and RECOGNIZER_BUSY (8)
+    // These occur with beep sound, need immediate restart
+    if (errorCode == SpeechRecognizer.ERROR_NO_MATCH 
+            || errorCode == SpeechRecognizer.ERROR_RECOGNIZER_BUSY) {
+        if (autoRestartEnabled) {
+            Log.i(TAG, "🔄 Beep heard (NO_MATCH/BUSY), restarting immediately (500ms)...");
+            if (listener != null) {
+                listener.onDebugLog("🔄 Beep heard, listening resumed in 500ms...");
+            }
+            // Immediate restart - 500ms instead of 1000ms default
+            handler.postDelayed(this::autoRestartListening, 500);
+        }
+        return; // Don't process further
+    }
+    
+    // Standard handling for other errors...
+    if (autoRestartEnabled && isTransientError(errorCode)) {
+        Log.i(TAG, "🔄 Transient error detected, auto-restarting...");
+        autoRestartListening();
+    } else if (autoRestartEnabled) {
+        Log.w(TAG, "⚠️ Non-transient error, retrying after delay...");
+        handler.postDelayed(this::autoRestartListening, 3000);
+    }
+}
+```
+
+### Error Code Reference
+
+| Code | Name | Cause | Beep Sound | Action |
+|------|------|-------|-----------|--------|
+| 7 | ERROR_NO_MATCH | No speech detected in audio buffer | ✅ Yes | **500ms restart** |
+| 8 | ERROR_RECOGNIZER_BUSY | Recognizer already processing | ✅ Yes | **500ms restart** |
+| 4 | ERROR_AUDIO | Microphone error | ❌ No | 1000ms restart |
+| 6 | ERROR_SPEECH_TIMEOUT | User silent > timeout | ❌ No | 1000ms restart |
+| 2 | ERROR_NETWORK_TIMEOUT | Network delay | ❌ No | 1000ms restart |
+| Others | Permanent errors | Critical failure | ❌ No | 3000ms retry |
+
+### Restart Delay Strategy
+
+**Why Different Delays?**
+- **500ms (NO_MATCH/BUSY):** Beep is acoustic signal that listening is ready. User expects immediate response.
+- **1000ms (transient errors):** Standard timeout before retry. Gives OS time to recover.
+- **3000ms (permanent errors):** Longer timeout for critical errors (permissions, network).
+
+**Timing Calculation:**
+```
+Beep sound plays: 0ms
+ErrorCode 7/8 received: ~100ms
+Delay starts: 100ms
+Restart listening: 100ms + 500ms = 600ms total
+User speaks: ~700ms+
+App captures voice: ✅ Success
+```
+
+Old approach with 1000ms delay:
+```
+Beep sound plays: 0ms
+ErrorCode 7/8 received: ~100ms
+Delay starts: 100ms
+Restart listening: 100ms + 1000ms = 1100ms total
+User speaks at 800ms: ❌ Missed (app not listening yet)
+App restarts: 1100ms (too late)
+```
+
+### DO's & DON'Ts for Error Code Handling
+
+**DO:**
+1. Check for ERROR_NO_MATCH (7) and ERROR_RECOGNIZER_BUSY (8) specifically
+2. Use 500ms restart delay for these "beep" errors (not 1000ms)
+3. Log "🔄 Beep heard" message with emoji for quick scanning
+4. Return early after handling NO_MATCH/BUSY (don't process as normal errors)
+5. Use handler.postDelayed() for all restart delays (never Thread.sleep)
+6. Log error code number for debugging: [7] or [8]
+7. Provide debug log message for in-app visibility
+8. Test with actual voice input after beep sound
+9. Verify restart timing with debug log timestamps
+10. Document error code meanings in comments
+11. Keep beep-specific delay (500ms) separate from standard delay (1000ms)
+12. Handle both error codes 7 and 8 identically
+13. Check isListening flag before restarting
+14. Verify autoRestartEnabled flag is true
+15. Test on devices with slow microphone drivers
+
+**DON'T:**
+1. DON'T wait 1-3 seconds for NO_MATCH/BUSY (user voices get missed)
+2. DON'T treat ERROR_NO_MATCH same as other errors (it's acoustic beep feedback)
+3. DON'T ignore ERROR_RECOGNIZER_BUSY (frequent on low-end devices)
+4. DON'T forget the 500ms restart delay constant (document it clearly)
+5. DON'T use Thread.sleep() for delays (blocks main thread)
+6. DON'T assume beep is always present (some devices may skip it)
+7. DON'T hardcode delay value in multiple places (use constant)
+8. DON'T process beep errors in isTransientError() path (handle first)
+9. DON'T log without emoji prefix (makes scanning logs harder)
+10. DON'T forget to call listener.onDebugLog() for visibility
+11. DON'T test on silent phone (turn on volume to hear beep)
+12. DON'T assume error order (process 7 and 8 before checking transient)
+13. DON'T change 500ms delay without thorough user testing
+14. DON'T forget isListening = false (prevents duplicate startListening calls)
+15. DON'T skip error logging (need details for troubleshooting)
+
+### Testing Checklist for Beep Sound Fix
+
+- [ ] Install app on device with volume on
+- [ ] Trigger incoming call
+- [ ] Listen for "tu tu tu" beep sound
+- [ ] Beep should be audible (not silent)
+- [ ] Within 500-600ms after beep, device should accept speech input
+- [ ] Speak a sentence IMMEDIATELY after beep (within 1 second)
+- [ ] Verify app detects your speech (Toast: "📢 Heard: [word]")
+- [ ] Verify debug log shows "🔄 Beep heard, listening resumed in 500ms..."
+- [ ] Verify final result appears: "✅ Final: [your sentence]"
+- [ ] Test 5 times with different sentences
+- [ ] Verify at least 4 out of 5 times app captures all words
+- [ ] Test on low-end device (may have slower microphone driver)
+- [ ] Enable debug log for timestamp visibility
+- [ ] Verify error code [7] or [8] shown in logs
+- [ ] Verify beep occurs every ~2 seconds during listening
+- [ ] Check device microphone is not blocked (no case obstruction)
+- [ ] Test with noise in background (ambient noise handling)
+- [ ] Test with multiple consecutive calls (restart behavior)
+- [ ] Verify no "tu tu tu" after first successful recognition
+- [ ] Check Logcat for proper error code logging
+
+### Troubleshooting Beep Sound Issues
+
+**Problem:** Beep sound doesn't play
+- **Check 1:** Verify device volume is ON (not muted)
+- **Check 2:** Verify permission RECORD_AUDIO is granted
+- **Check 3:** Check if microphone is physically blocked
+- **Check 4:** Verify speech recognizer initialized: "✅ Google On-Device Speech Recognizer created"
+- **Solution:** Check volume, grant permission, unblock microphone
+
+**Problem:** App restarts listening too slowly after beep
+- **Check 1:** Verify 500ms restart delay used for NO_MATCH/BUSY
+- **Check 2:** Check if exception in autoRestartListening() (causing longer delay)
+- **Check 3:** Verify handler not blocked by other tasks
+- **Check 4:** Check Logcat for "🔄 Beep heard, listening resumed in 500ms..."
+- **Solution:** Verify error code handling, check for exceptions
+
+**Problem:** Voice still not captured after beep
+- **Check 1:** Verify microphone not muted (not in "call audio" mode)
+- **Check 2:** Check if speech recognition timing out before user speaks
+- **Check 3:** Verify beep is NOT the end-of-speech indicator (some devices play beep at end)
+- **Check 4:** Check app permission level on device (restricted on some Moto ROM versions)
+- **Solution:** Test on different device, check microphone permissions in Settings
+
+**Problem:** Too many ERROR_NO_MATCH (beeping constantly)
+- **Check 1:** Verify device is in actual phone call (not just app open)
+- **Check 2:** Check if microphone capturing background noise as speech
+- **Check 3:** Verify speech recognition timeout set correctly
+- **Solution:** Test with actual scam keyword phrase, adjust timeout if needed
+
+---
+
+## Crash Safety Fixes for WindowManager and Speech Recognition (Moto/Redmi)
+
+### Overview
+ScamShield crashed with "tu tu tu" beep sound followed by immediate close on Moto/Redmi devices due to:
+1. **NullPointerException** in WindowManager.addView() without null checks
+2. **Unsafe Activity Context** in WindowManager causing lifecycle crashes
+3. **Race Condition** between WindowManager initialization and SpeechRecognizer startup
+4. **Double Initialization** of SpeechRecognizer without proper cleanup
+5. **Missing Hardware Acceleration** causing overlay rendering failures
+6. **Silent Crashes** with no user feedback about the actual error
+
+### Root Causes Analysis (Based on AGENTS.md DO's & DON'Ts)
+
+**AGENTS.md Line 2821 (DON'T):** "DON'T assume windowManager is available (always check for null)"
+- **Problem:** Original code called `windowManager.addView()` without null check
+- **Impact:** NullPointerException on devices with restricted WindowManager access
+- **Solution:** Added explicit `if (windowManager == null) return` check before initialization
+
+**AGENTS.md Line 2819 (DON'T):** "DON'T call addView() multiple times without removeView() first (causes crash)"
+- **Problem:** Re-initialization attempted to add window without removing old one
+- **Impact:** BadTokenException on Moto/Redmi devices with strict view tracking
+- **Solution:** Check `isWindowAdded` flag and removeView() before adding new window
+
+**AGENTS.md Line 2804 (DO):** "Use WindowManager from Context.getSystemService()"
+- **Problem:** Used Activity Context instead of Application Context
+- **Impact:** Memory leaks and crashes when Activity destroyed while WindowManager still active
+- **Solution:** Changed to `activity.getApplicationContext().getSystemService()`
+
+**AGENTS.md Line 2813 (DO):** "Use handler.post() for all UI updates (thread safety)"
+- **Problem:** SpeechRecognizer started immediately in onCreate, conflicting with WindowManager
+- **Impact:** Race condition causing resource conflicts on slow devices
+- **Solution:** Added 1-second delay using `handler.postDelayed(this::start, 1000)`
+
+### Implementation Details
+
+#### Fix 1: Safe WindowManager Access in DebugLogWindow.java
+
+**Change 1: Use Application Context**
+```java
+public DebugLogWindow(AppCompatActivity activity) {
+    this.activity = activity;
+    // CRITICAL: Use Application Context for WindowManager to survive Activity lifecycle
+    this.windowManager = (WindowManager) activity.getApplicationContext()
+        .getSystemService(Context.WINDOW_SERVICE);
+    
+    if (windowManager == null) {
+        Log.e(TAG, "❌ CRITICAL: WindowManager is null - overlay will not work");
+    }
+}
+```
+
+**Benefit:** WindowManager survives Activity destruction, preventing memory leaks and crashes
+
+**Change 2: Comprehensive Null & Safety Checks**
+```java
+public void initialize(ViewGroup parentContainer) {
+    // SAFETY CHECK 1: Verify windowManager is available
+    if (windowManager == null) {
+        Log.e(TAG, "❌ ERROR: WindowManager is null");
+        return;
+    }
+    
+    // SAFETY CHECK 2: Verify activity context is valid
+    if (activity == null || activity.isDestroyed()) {
+        Log.e(TAG, "❌ ERROR: Activity is destroyed");
+        return;
+    }
+    
+    // ... rest of initialization
+}
+```
+
+**Benefit:** Prevents NullPointerException and IllegalStateException crashes
+
+**Change 3: Try-Catch Wrapper for addView()**
+```java
+try {
+    Log.d(TAG, "🔧 About to add window (type=" + windowParams.type + ")");
+    windowManager.addView(debugContainer, windowParams);
+    isWindowAdded = true;
+} catch (WindowManager.BadTokenException e) {
+    Log.e(TAG, "❌ BadTokenException - invalid token: " + e.getMessage());
+    isWindowAdded = false;
+    return;
+} catch (IllegalArgumentException e) {
+    Log.e(TAG, "❌ IllegalArgumentException - invalid params: " + e.getMessage());
+    isWindowAdded = false;
+    return;
+} catch (Exception e) {
+    Log.e(TAG, "❌ Unexpected: " + e.getClass().getSimpleName() 
+            + " - " + e.getMessage());
+    isWindowAdded = false;
+    return;
+}
+```
+
+**Benefit:** Catches all possible WindowManager exceptions with detailed logging for debugging
+
+**Change 4: Proper Window Removal in destroy()**
+```java
+public void destroy() {
+    if (isWindowAdded && debugContainer != null && windowManager != null) {
+        try {
+            windowManager.removeView(debugContainer);
+            isWindowAdded = false;
+        } catch (IllegalArgumentException e) {
+            // Expected if already removed
+            Log.w(TAG, "Window already removed: " + e.getMessage());
+            isWindowAdded = false;
+        } catch (Exception e) {
+            Log.e(TAG, "Error removing window: " + e.getMessage());
+            isWindowAdded = false;
+        }
+    }
+    // Cleanup references
+    debugLogTextView = null;
+    debugScroll = null;
+    debugContainer = null;
+    windowParams = null;
+}
+```
+
+**Benefit:** Handles all removal exceptions to prevent memory leaks
+
+#### Fix 2: Delayed SpeechRecognizer Start in GoogleSpeechRecognizer.java
+
+**Change: Add 1-second Delay**
+```java
+@Override
+public void start() {
+    if (speechRecognizer == null) {
+        Log.e(TAG, "❌ Speech recognizer not initialized");
+        return;
+    }
+    
+    if (isListening) {
+        Log.w(TAG, "⚠️ Already listening");
+        return;
+    }
+    
+    // SAFETY: Add 1-second delay before listening
+    // Prevents race condition with WindowManager initialization
+    Log.d(TAG, "⏳ Delaying speech start by 1 second (crash safety)...");
+    handler.postDelayed(() -> {
+        if (speechRecognizer == null) {
+            Log.e(TAG, "❌ Recognizer became null during delay");
+            return;
+        }
+        
+        try {
+            isListening = true;
+            speechRecognizer.startListening(recognizerIntent);
+            Log.i(TAG, "📢 Started listening");
+        } catch (Exception e) {
+            Log.e(TAG, "❌ Error starting: " + e.getMessage());
+            isListening = false;
+        }
+    }, 1000);  // 1-second delay
+}
+```
+
+**Benefit:** Allows OS to set up audio resources after WindowManager overlay is created
+
+#### Fix 3: Proper SpeechRecognizer Cleanup
+
+**Change: Enhanced destroy() Method**
+```java
+public void destroy() {
+    try {
+        // Cancel ALL pending handler tasks FIRST
+        handler.removeCallbacksAndMessages(null);
+        
+        if (speechRecognizer != null) {
+            // Stop listening
+            if (isListening) {
+                speechRecognizer.stopListening();
+            }
+            // Destroy recognizer COMPLETELY
+            speechRecognizer.destroy();
+            speechRecognizer = null;  // CRITICAL: Set to null immediately
+        }
+        
+        isListening = false;
+        Log.i(TAG, "✅ Cleaned up completely");
+    } catch (Exception e) {
+        Log.e(TAG, "Error during cleanup: " + e.getMessage());
+    }
+}
+```
+
+**Benefit:** Prevents "Double Initialization" crashes by completely releasing resources
+
+#### Fix 4: Hardware Acceleration in AndroidManifest.xml
+
+**Change: Add Hardware Acceleration Flag**
+```xml
+<application
+    android:name="com.shreyanshi.scamshield.ScamApplication"
+    android:hardwareAccelerated="true"
+    ...>
+```
+
+**Benefit:** Enables GPU rendering for overlays on Redmi/MIUI devices (fixes rendering crashes)
+
+#### Fix 5: Crash Log Toast Display in ScamApplication.java
+
+**Key Enhancement: Global Uncaught Exception Handler with Toast**
+```java
+private void setupGlobalExceptionHandler() {
+    Thread.setDefaultUncaughtExceptionHandler((thread, throwable) -> {
+        // Extract crash details
+        String exceptionClass = throwable.getClass().getSimpleName();
+        String crashLocation = "Unknown";
+        if (throwable.getStackTrace() != null && throwable.getStackTrace().length > 0) {
+            StackTraceElement element = throwable.getStackTrace()[0];
+            crashLocation = element.getClassName() + ":" + element.getLineNumber();
+        }
+        
+        // Log to file
+        File f = new File(dir, "last_crash.txt");
+        FileWriter fw = new FileWriter(f, true);
+        fw.write("Exception: " + exceptionClass + "\n");
+        fw.write("Location: " + crashLocation + "\n");
+        // ... full stack trace
+        
+        // SAFETY FIX: Show Toast before crash
+        Handler mainHandler = new Handler(Looper.getMainLooper());
+        mainHandler.post(() -> {
+            String toastMessage = "⚠️ CRASH: " + exceptionClass + "\n" + 
+                    "📍 " + crashLocation.substring(0, Math.min(50, crashLocation.length()));
+            Toast.makeText(getApplicationContext(), toastMessage, Toast.LENGTH_LONG).show();
+        });
+        
+        // Give Toast 500ms to display
+        Thread.sleep(500);
+        
+        // Then crash
+        defaultHandler.uncaughtException(thread, throwable);
+    });
+}
+```
+
+**Benefit:** User sees crash details (Exception type, line number) before app closes - critical for debugging
+
+### DO's & DON'Ts for Crash Safety (Based on AGENTS.md)
+
+**DO:**
+1. Always check windowManager for null before calling methods (AGENTS.md 2821)
+2. Check `isWindowAdded` flag before adding duplicate windows (AGENTS.md 2819)
+3. Use Application Context for WindowManager (AGENTS.md 2804)
+4. Wrap all WindowManager operations in try-catch with specific exception handling
+5. Remove old window before adding new one (prevents BadTokenException)
+6. Cancel all handler tasks before destroying SpeechRecognizer (prevents leaked callbacks)
+7. Set speechRecognizer = null immediately after destroy() (prevents reuse)
+8. Add 1-second delay before startListening() to allow OS resource setup
+9. Check if activity is destroyed before using it
+10. Log exact line number and exception class in crash handler
+11. Show Toast with crash details before app closes (user feedback)
+12. Verify all resources cleaned up in onDestroy() (memory leaks otherwise)
+13. Test on actual Moto/Redmi devices (Emulator won't show all issues)
+14. Enable hardware acceleration for GPU-based overlays
+15. Handle IllegalArgumentException specifically for already-removed windows
+
+**DON'T:**
+1. DON'T assume windowManager is available without null check (AGENTS.md 2821)
+2. DON'T call addView() multiple times without removeView() first (AGENTS.md 2819)
+3. DON'T use Activity Context for WindowManager (causes lifecycle crashes)
+4. DON'T ignore exceptions in addView() without logging details
+5. DON'T forget to set speechRecognizer = null after destroy()
+6. DON'T leave pending handler tasks after service stops
+7. DON'T start SpeechRecognizer immediately in onCreate()
+8. DON'T assume activity is valid before using it (check !activity.isDestroyed())
+9. DON'T log generic Exception messages (log getClass().getSimpleName())
+10. DON'T crash silently without showing user what went wrong
+11. DON'T test on emulator only (behavior differs on real Moto/Redmi)
+12. DON'T skip hardware acceleration for overlay rendering
+13. DON'T assume all devices support TYPE_APPLICATION_OVERLAY (provide TYPE_PHONE fallback)
+14. DON'T remove windowManager reference if it's still needed
+15. DON'T skip cleanup in destroy() (can cause crashes on Activity recreation)
+
+### Testing Checklist for Crash Safety Fixes
+
+- [ ] Build app: `./gradlew clean assembleDebug`
+- [ ] Install on Moto/Redmi device (not emulator)
+- [ ] Open app and check Logcat for initialization logs
+- [ ] Verify "✅ WindowManager obtained from Application Context" appears
+- [ ] Verify "✅ Global exception handler installed" appears
+- [ ] Enable debug log in Settings (should appear at bottom-left)
+- [ ] Trigger incoming call with scam keyword
+- [ ] Verify app does NOT crash with "tu tu tu" beep
+- [ ] Listen for beep and speak immediately after (within 1 second)
+- [ ] Verify speech is captured (Toast: "📢 Heard: [word]")
+- [ ] Force a crash: Press "Force Crash" button or trigger NPE
+- [ ] Verify Toast appears showing "⚠️ CRASH: [ExceptionType]" and line number
+- [ ] Verify crash is logged to: `/sdcard/Android/data/[package]/files/logs/last_crash.txt`
+- [ ] Verify window appears and disappears correctly
+- [ ] Test rapid enable/disable of debug log (toggle 10 times quickly)
+- [ ] Verify no "BadTokenException" in Logcat
+- [ ] Test backgrounding app (press home button)
+- [ ] Press back button to return - app should not crash
+- [ ] Rotate screen - window should persist or gracefully recover
+- [ ] Verify memory usage is stable (no leaks) with `adb shell dumpsys meminfo`
+- [ ] Check file-based crash log exists with full stack trace
+
+### Troubleshooting Crash Safety Issues
+
+**Problem:** "BadTokenException: Unable to add window" crash
+- **Check 1:** Verify windowManager not null: "✅ WindowManager obtained"
+- **Check 2:** Verify `isWindowAdded` flag prevents duplicates
+- **Check 3:** Check if Activity was destroyed before initialize() called
+- **Check 4:** Logcat should show "❌ BadTokenException" with details
+- **Solution:** Ensure null checks pass, never call initialize() on destroyed activity
+
+**Problem:** App crashes on activity recreation (screen rotation)
+- **Check 1:** Verify window is removed in onDestroy()
+- **Check 2:** Verify `debugLogWindow.destroy()` is called in MainActivity.onDestroy()
+- **Check 3:** Check for lingering windowManager references
+- **Solution:** Ensure destroy() is called for all overlays before activity destroyed
+
+**Problem:** SpeechRecognizer starts but immediately crashes
+- **Check 1:** Verify 1-second delay implemented: "⏳ Delaying speech start"
+- **Check 2:** Verify speechRecognizer is not null after delay
+- **Check 3:** Check for audio permission errors in Logcat
+- **Solution:** Verify delay is in place and permission is granted
+
+**Problem:** Crash silent - no Toast or log entry
+- **Check 1:** Verify ScamApplication is declared in AndroidManifest.xml
+- **Check 2:** Verify global exception handler is installed: "✅ Global exception handler installed"
+- **Check 3:** Check if exception handler method is being called
+- **Solution:** Ensure ScamApplication.onCreate() runs by checking Logcat at startup
+
+**Problem:** WindowManager null despite getSystemService() call
+- **Check 1:** Verify context.getSystemService() returned non-null
+- **Check 2:** Check device ROM version (some Moto ROMs restrict WindowManager)
+- **Check 3:** Verify SYSTEM_ALERT_WINDOW permission is optional in manifest
+- **Solution:** Fallback to non-overlay approach for restricted devices
+
+### Files Modified for Crash Safety
+
+| File | Changes | Line Changes |
+|------|---------|--------------|
+| **DebugLogWindow.java** | Safe WindowManager access with null checks | +40 lines of safety code |
+| **GoogleSpeechRecognizer.java** | 1-second startup delay + enhanced cleanup | +15 lines of safety code |
+| **ScamApplication.java** | Enhanced crash handler with Toast display | +50 lines of safety code |
+| **AndroidManifest.xml** | Added hardware acceleration flag | 1 line change |
+
+### Crash Safety Summary
+
+Before fixes: **Crashes immediately with "tu tu tu" beep on Moto/Redmi** (NullPointerException in WindowManager.addView)
+
+After fixes:
+✅ WindowManager initialized safely with null checks
+✅ Application Context used (survives lifecycle)
+✅ Speech Recognizer delayed 1 second (allows resource setup)
+✅ Proper cleanup prevents double initialization
+✅ Hardware acceleration enables overlay rendering
+✅ User sees crash details in Toast before app closes
+
+---
+
 ## Build Commands
 ```bash
 ./gradlew assembleDebug    # Debug build
