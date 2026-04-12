@@ -33,6 +33,9 @@ import java.util.Set;
 
 import android.Manifest;
 import android.content.pm.PackageManager;
+import android.provider.Settings;
+
+import androidx.localbroadcastmanager.content.LocalBroadcastManager;
 
 public class ScamMonitorService extends Service implements SpeechListener {
     private static final String TAG = "ScamShield-Monitor";
@@ -40,6 +43,8 @@ public class ScamMonitorService extends Service implements SpeechListener {
     
     public static final String ACTION_START = "com.shreyanshi.scamshield.ACTION_START_MONITORING";
     public static final String ACTION_STOP = "com.shreyanshi.scamshield.ACTION_STOP_MONITORING";
+    public static final String ACTION_DEBUG_LOG = "com.shreyanshi.scamshield.DEBUG_LOG";
+    public static final String EXTRA_DEBUG_MESSAGE = "log_message";
     private static final long ALERT_DEBOUNCE_MS = 30000;
 
     private static final String CHANNEL_ID = "scam_monitor_channel";
@@ -77,6 +82,33 @@ public class ScamMonitorService extends Service implements SpeechListener {
         debugListener = null;
     }
 
+    /**
+     * Send debug message via LocalBroadcast to MainActivity.
+     * This is safer than direct listener callbacks because it works even if
+     * MainActivity is not running, and provides cleaner service-to-UI communication.
+     * 
+     * CRITICAL: All debug events must be sent through this method for visibility
+     * in the Internal Debug Terminal (bottom of MainActivity UI).
+     */
+    private void sendDebugLogBroadcast(String message) {
+        try {
+            Intent intent = new Intent(ACTION_DEBUG_LOG);
+            intent.putExtra(EXTRA_DEBUG_MESSAGE, message);
+            LocalBroadcastManager.getInstance(this).sendBroadcast(intent);
+            
+            // Also send to direct listener if available (MainActivity active)
+            if (debugListener != null) {
+                try {
+                    debugListener.onDebugLog(message);
+                } catch (Exception e) {
+                    Log.d(TAG, "Direct debug listener callback failed: " + e.getMessage());
+                }
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error sending debug broadcast: " + e.getMessage());
+        }
+    }
+
     @Override
     public void onCreate() {
         super.onCreate();
@@ -86,6 +118,7 @@ public class ScamMonitorService extends Service implements SpeechListener {
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         Log.d(TAG, "Service onStartCommand");
+        sendDebugLogBroadcast("✅ ScamMonitorService started");
         
         // CRITICAL: Start foreground notification FIRST (must be within 5 seconds)
         if (!isServiceRunning) {
@@ -99,6 +132,7 @@ public class ScamMonitorService extends Service implements SpeechListener {
         
         if (!scamAlertsEnabled) {
             Log.i(TAG, "⏹️ Scam detection disabled by user, stopping service");
+            sendDebugLogBroadcast("⏹️ Scam detection disabled, stopping service");
             stopForeground(Service.STOP_FOREGROUND_REMOVE);
             stopSelf();
             return START_NOT_STICKY;
@@ -126,27 +160,14 @@ public class ScamMonitorService extends Service implements SpeechListener {
 
     private void startForegroundWithNotification() {
         Log.d(TAG, "startForegroundWithNotification: Starting");
-        
-        if (debugListener != null) {
-            try {
-                debugListener.onDebugLog("🔧 Creating foreground notification...");
-            } catch (Exception e) {
-                Log.d(TAG, "Debug listener callback failed: " + e.getMessage());
-            }
-        }
+        sendDebugLogBroadcast("🔧 Creating foreground notification...");
         
         // CRITICAL: Create channel FIRST before building notification
         try {
             createNotificationChannel();
         } catch (Exception e) {
             Log.e(TAG, "Failed to create notification channel: " + e.getMessage());
-            if (debugListener != null) {
-                try {
-                    debugListener.onDebugLog("❌ Notification channel creation failed");
-                } catch (Exception e2) {
-                    Log.d(TAG, "Debug listener callback failed");
-                }
-            }
+            sendDebugLogBroadcast("❌ Notification channel creation failed");
             // Don't stop - try to continue
         }
 
@@ -154,13 +175,7 @@ public class ScamMonitorService extends Service implements SpeechListener {
         NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
         if (nm == null) {
             Log.e(TAG, "CRITICAL: NotificationManager is null - cannot show foreground service");
-            if (debugListener != null) {
-                try {
-                    debugListener.onDebugLog("❌ NotificationManager is null");
-                } catch (Exception e) {
-                    Log.d(TAG, "Debug listener callback failed");
-                }
-            }
+            sendDebugLogBroadcast("❌ NotificationManager is null");
             // FALLBACK: Try to stop gracefully
             try {
                 stopSelf();
@@ -174,13 +189,7 @@ public class ScamMonitorService extends Service implements SpeechListener {
             Log.d(TAG, "Icon verification: R.drawable.ic_notification is accessible");
         } catch (Exception e) {
             Log.e(TAG, "CRITICAL: Icon resource missing or invalid: " + e.getMessage());
-            if (debugListener != null) {
-                try {
-                    debugListener.onDebugLog("❌ Icon resource missing");
-                } catch (Exception e2) {
-                    Log.d(TAG, "Debug listener callback failed");
-                }
-            }
+            sendDebugLogBroadcast("❌ Icon resource missing");
             // FALLBACK: Use system icon (better than crash)
             // Don't proceed with notification
             try {
@@ -219,35 +228,17 @@ public class ScamMonitorService extends Service implements SpeechListener {
                     Log.d(TAG, "startForeground called (Android O/P)");
                 }
                 Log.d(TAG, "✅ Foreground service started successfully");
-                if (debugListener != null) {
-                    try {
-                        debugListener.onDebugLog("✅ Foreground notification created");
-                    } catch (Exception e) {
-                        Log.d(TAG, "Debug listener callback failed");
-                    }
-                }
+                sendDebugLogBroadcast("✅ Foreground notification created");
             } catch (Exception e) {
                 Log.e(TAG, "startForeground failed: " + e.getClass().getName() + ": " + e.getMessage(), e);
                 Log.e(TAG, "Details: Notification ID=" + NOTIFICATION_ID + " Channel=" + CHANNEL_ID);
-                if (debugListener != null) {
-                    try {
-                        debugListener.onDebugLog("❌ startForeground failed: " + e.getMessage());
-                    } catch (Exception e2) {
-                        Log.d(TAG, "Debug listener callback failed");
-                    }
-                }
+                sendDebugLogBroadcast("❌ startForeground failed: " + e.getMessage());
                 throw e; // Critical failure
             }
 
         } catch (Exception e) {
             Log.e(TAG, "Failed to start foreground service: " + e.getMessage(), e);
-            if (debugListener != null) {
-                try {
-                    debugListener.onDebugLog("❌ Failed to create notification: " + e.getMessage());
-                } catch (Exception e2) {
-                    Log.d(TAG, "Debug listener callback failed");
-                }
-            }
+            sendDebugLogBroadcast("❌ Failed to create notification: " + e.getMessage());
             // Last resort: cancel notification and stop
             try {
                 nm.cancel(NOTIFICATION_ID);
@@ -301,58 +292,38 @@ public class ScamMonitorService extends Service implements SpeechListener {
         
         if (!hasRecordAudio) {
             Log.e(TAG, "❌ RECORD_AUDIO permission missing - cannot start speech recognition");
-            if (debugListener != null) {
-                try {
-                    debugListener.onDebugLog("❌ RECORD_AUDIO permission missing");
-                } catch (Exception e) {
-                    Log.d(TAG, "Debug listener callback failed");
-                }
-            }
+            sendDebugLogBroadcast("❌ RECORD_AUDIO permission missing");
             showToast("Microphone permission required for scam detection");
             return;
         }
         
         Log.i(TAG, "✅ RECORD_AUDIO permission verified");
-        if (debugListener != null) {
-            try {
-                debugListener.onDebugLog("✅ RECORD_AUDIO permission verified");
-            } catch (Exception e) {
-                Log.d(TAG, "Debug listener callback failed");
-            }
+        sendDebugLogBroadcast("✅ RECORD_AUDIO permission verified");
+        
+        // Check overlay permission (optional but good to know)
+        boolean hasOverlay = Build.VERSION.SDK_INT < Build.VERSION_CODES.M || Settings.canDrawOverlays(this);
+        if (hasOverlay) {
+            Log.i(TAG, "✅ SYSTEM_ALERT_WINDOW permission available");
+            sendDebugLogBroadcast("✅ Overlay permission available");
+        } else {
+            Log.w(TAG, "⚠️ SYSTEM_ALERT_WINDOW permission not granted (optional)");
+            sendDebugLogBroadcast("⚠️ Overlay permission not granted (optional)");
         }
         
         try {
             // Initialize Google On-Device Speech Recognizer (instant, no model loading)
-            if (debugListener != null) {
-                try {
-                    debugListener.onDebugLog("🎤 Initializing Google Speech Recognizer...");
-                } catch (Exception e) {
-                    Log.d(TAG, "Debug listener callback failed");
-                }
-            }
+            sendDebugLogBroadcast("🎤 Initializing Google Speech Recognizer...");
             
             googleSpeechRecognizer = new GoogleSpeechRecognizer(this, this);
             googleSpeechRecognizer.start();
             
             Log.i(TAG, "✅ Google On-Device Speech Recognizer initialized and listening");
-            if (debugListener != null) {
-                try {
-                    debugListener.onDebugLog("✅ Speech Recognizer initialized and listening");
-                } catch (Exception e) {
-                    Log.d(TAG, "Debug listener callback failed");
-                }
-            }
+            sendDebugLogBroadcast("✅ Speech Recognizer initialized and listening");
             showToast("ScamShield is monitoring calls");
             
         } catch (Exception e) {
             Log.e(TAG, "❌ Error initializing Google Speech: " + e.getMessage(), e);
-            if (debugListener != null) {
-                try {
-                    debugListener.onDebugLog("❌ Speech Recognizer failed: " + e.getMessage());
-                } catch (Exception e2) {
-                    Log.d(TAG, "Debug listener callback failed");
-                }
-            }
+            sendDebugLogBroadcast("❌ Speech Recognizer failed: " + e.getMessage());
             showToast("Failed to start scam detection");
         }
     }
@@ -407,34 +378,21 @@ public class ScamMonitorService extends Service implements SpeechListener {
             Intent alertIntent = ScamAlertActivity.createIntent(this, keywords, currentNumber);
             startActivity(alertIntent);
             
-            // Notify debug listener
-            if (debugListener != null) {
-                try {
-                    debugListener.onDebugLog("✅ Alert shown for: " + keywords);
-                } catch (Exception e) {
-                    Log.d(TAG, "Debug listener callback failed: " + e.getMessage());
-                }
-            }
+            // Notify via broadcast
+            sendDebugLogBroadcast("✅ Alert shown for: " + keywords);
         } catch (Exception e) {
             Log.e(TAG, "Error showing alert: " + e.getMessage());
             handler.post(() -> Toast.makeText(this, "Scam Alert: " + keywords, Toast.LENGTH_LONG).show());
             
             // Fallback: Try to trigger MainActivity fallback alert
             try {
-                // This will be called if MainActivity is running
                 MainActivity.triggerFallbackAlertStatic(keywords);
             } catch (Exception e2) {
                 Log.d(TAG, "Fallback alert not available: " + e2.getMessage());
             }
             
-            // Notify debug listener of failure
-            if (debugListener != null) {
-                try {
-                    debugListener.onDebugLog("❌ Alert failed, fallback triggered");
-                } catch (Exception e3) {
-                    Log.d(TAG, "Debug listener callback failed: " + e3.getMessage());
-                }
-            }
+            // Notify of failure
+            sendDebugLogBroadcast("❌ Alert failed, fallback triggered");
         }
     }
 
@@ -467,6 +425,7 @@ public class ScamMonitorService extends Service implements SpeechListener {
     @Override
     public void onDestroy() {
         Log.i(TAG, "🛑 ScamMonitorService.onDestroy() called");
+        sendDebugLogBroadcast("🛑 Service destroying...");
         
         // Stop all monitoring immediately
         stopMonitoring();
@@ -475,6 +434,7 @@ public class ScamMonitorService extends Service implements SpeechListener {
         try {
             stopForeground(STOP_FOREGROUND_REMOVE);
             Log.d(TAG, "✅ Foreground notification removed");
+            sendDebugLogBroadcast("✅ Foreground notification removed");
         } catch (Exception e) {
             Log.w(TAG, "⚠️ Error removing foreground notification: " + e.getMessage());
         }
