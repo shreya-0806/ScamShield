@@ -3447,6 +3447,348 @@ After fixes:
 
 ---
 
+## Internal Debug Terminal - Failsafe UI Logging (Android 7.0+)
+
+### Overview
+ScamShield implements an **Internal Debug Terminal** (UI-based in-app logger) that displays real-time speech recognition events and service lifecycle logs directly within the app without requiring Logcat access or overlay permissions. This replaces the WindowManager overlay approach on Redmi/Moto devices where SYSTEM_ALERT_WINDOW restrictions cause crashes.
+
+**Key Benefit:** No WindowManager overlay permission needed, works on all devices including Moto/Redmi with strict ROM restrictions.
+
+### Architecture Pattern
+
+**Components:**
+1. **activity_main.xml** - Added ScrollView + TextView (bottom 40% of screen)
+2. **MainActivity.appendLog()** - Timestamped log appending with auto-scroll
+3. **LocalBroadcastManager** - Safe service-to-UI communication
+4. **ScamMonitorService.sendDebugLogBroadcast()** - Event broadcasting
+5. **GoogleSpeechRecognizer** - All callbacks send debug events via listener
+
+**Communication Flow:**
+```
+ScamMonitorService (background)
+    ↓ (sends Intent via LocalBroadcast)
+LocalBroadcastManager
+    ↓ (broadcasts ACTION_DEBUG_LOG with message)
+MainActivity.debugReceiver (foreground)
+    ↓ (receives and processes)
+MainActivity.appendLog(message)
+    ↓ (UI update via handler.post())
+TextView in activity_main.xml
+    ↓ (display to user with [HH:mm:ss] timestamp)
+Internal Debug Terminal (bottom 40% of MainActivity)
+```
+
+### Implementation Details
+
+#### 1. Layout Changes (activity_main.xml)
+
+**Added to bottom of MainActivity:**
+```xml
+<ScrollView
+    android:id="@+id/debug_scroll_view"
+    android:layout_width="match_parent"
+    android:layout_height="0dp"
+    android:layout_weight="0.4"
+    android:layout_below="@id/bottomNavigation"
+    android:background="#000000">
+    
+    <TextView
+        android:id="@+id/internal_debug_log"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:textColor="#00FF00"
+        android:textSize="10sp"
+        android:typeface="monospace"
+        android:padding="8dp"
+        android:scrollbars="vertical"
+        android:maxLines="50" />
+</ScrollView>
+```
+
+**Properties:**
+- **Height:** 40% of MainActivity (0dp with layout_weight=0.4)
+- **Position:** Bottom of screen, above BottomNavigationView
+- **Background:** Pure black (#000000) for contrast
+- **Text:** Green (#00FF00) monospace, 10sp size
+- **Max Lines:** 50 (auto-removes oldest entries when exceeded)
+- **Scroll:** Vertical scrollbar enabled, auto-scroll to bottom
+
+#### 2. MainActivity Debug Logging Setup
+
+**Initialization (onCreate):**
+```java
+private ScrollView debugScrollView;
+private TextView internalDebugLog;
+private LocalBroadcastManager localBroadcastManager;
+private static final int MAX_DEBUG_LINES = 50;
+private BroadcastReceiver debugReceiver = new BroadcastReceiver() {
+    @Override
+    public void onReceive(Context context, Intent intent) {
+        if (ScamMonitorService.ACTION_DEBUG_LOG.equals(intent.getAction())) {
+            String message = intent.getStringExtra(ScamMonitorService.EXTRA_DEBUG_MESSAGE);
+            appendLog(message);
+        }
+    }
+};
+
+@Override
+protected void onCreate(Bundle savedInstanceState) {
+    super.onCreate(savedInstanceState);
+    setContentView(R.layout.activity_main);
+    
+    // Initialize debug terminal
+    debugScrollView = findViewById(R.id.debug_scroll_view);
+    internalDebugLog = findViewById(R.id.internal_debug_log);
+    localBroadcastManager = LocalBroadcastManager.getInstance(this);
+}
+```
+
+**Appending Logs (Main Thread Safe):**
+```java
+private void appendLog(String message) {
+    handler.post(() -> {
+        try {
+            // Add timestamp
+            SimpleDateFormat sdf = new SimpleDateFormat("HH:mm:ss", Locale.US);
+            String timestamp = "[" + sdf.format(new Date()) + "] ";
+            String logLine = timestamp + message;
+            
+            // Get current text
+            String currentText = internalDebugLog.getText().toString();
+            
+            // Append new line
+            if (currentText.isEmpty()) {
+                internalDebugLog.setText(logLine);
+            } else {
+                internalDebugLog.setText(currentText + "\n" + logLine);
+            }
+            
+            // Keep only last 50 lines (AGENTS.md rule line 1615)
+            String[] lines = internalDebugLog.getText().toString().split("\n");
+            if (lines.length > MAX_DEBUG_LINES) {
+                StringBuilder sb = new StringBuilder();
+                for (int i = lines.length - MAX_DEBUG_LINES; i < lines.length; i++) {
+                    if (i > lines.length - MAX_DEBUG_LINES) sb.append("\n");
+                    sb.append(lines[i]);
+                }
+                internalDebugLog.setText(sb.toString());
+            }
+            
+            // Auto-scroll to bottom (AGENTS.md rule line 1631)
+            debugScrollView.post(() -> debugScrollView.fullScroll(View.FOCUS_DOWN));
+        } catch (Exception e) {
+            Log.e(TAG, "Error appending log: " + e.getMessage());
+        }
+    });
+}
+```
+
+**Register/Unregister (onStart/onStop):**
+```java
+@Override
+public void onStart() {
+    super.onStart();
+    // Register LocalBroadcast receiver
+    IntentFilter filter = new IntentFilter(ScamMonitorService.ACTION_DEBUG_LOG);
+    localBroadcastManager.registerReceiver(debugReceiver, filter);
+    appendLog("✅ MainActivity resumed");
+}
+
+@Override
+public void onStop() {
+    super.onStop();
+    // Unregister to prevent leaks
+    localBroadcastManager.unregisterReceiver(debugReceiver);
+}
+```
+
+#### 3. ScamMonitorService - Sending Debug Events
+
+**Add LocalBroadcast Constants:**
+```java
+public static final String ACTION_DEBUG_LOG = "com.shreyanshi.scamshield.DEBUG_LOG";
+public static final String EXTRA_DEBUG_MESSAGE = "log_message";
+```
+
+**Send Debug Messages:**
+```java
+private void sendDebugLogBroadcast(String message) {
+    try {
+        Intent intent = new Intent(ACTION_DEBUG_LOG);
+        intent.putExtra(EXTRA_DEBUG_MESSAGE, message);
+        LocalBroadcastManager.getInstance(this).sendBroadcast(intent);
+        
+        // Also send to direct listener if MainActivity is active
+        if (debugListener != null) {
+            try {
+                debugListener.onDebugLog(message);
+            } catch (Exception e) {
+                Log.d(TAG, "Direct debug listener failed: " + e.getMessage());
+            }
+        }
+    } catch (Exception e) {
+        Log.e(TAG, "Error sending debug broadcast: " + e.getMessage());
+    }
+}
+```
+
+**Send Events from All Critical Methods:**
+- `onStartCommand()` - "✅ ScamMonitorService started"
+- `startForegroundWithNotification()` - "🔧 Creating foreground notification...", "✅ Foreground notification created"
+- `initializeSpeechRecognition()` - "✅ RECORD_AUDIO permission verified", "🎤 Initializing Google Speech Recognizer...", "✅ Speech Recognizer initialized"
+- `showScamAlert()` - "✅ Alert shown for: [keyword]", "❌ Alert failed, fallback triggered"
+- `onDestroy()` - "🛑 Service destroying...", "✅ Foreground notification removed"
+
+#### 4. GoogleSpeechRecognizer - Callback Logging
+
+**All RecognitionListener callbacks send debug events:**
+```java
+// In onReadyForSpeech()
+listener.onDebugLog("🎤 Ready for speech input");
+
+// In onPartialResults()
+listener.onDebugLog("📢 Partial: " + text);
+
+// In onResults()
+listener.onDebugLog("✅ Final: " + text);
+
+// In onError()
+listener.onDebugLog("❌ Error [" + errorCode + "]: " + errorMessage);
+listener.onDebugLog("🔄 Beep heard, listening resumed in 500ms...");
+listener.onDebugLog("🔄 Auto-restarting after error...");
+listener.onDebugLog("⚠️ Retrying in 3 seconds...");
+```
+
+### Emoji Prefixes (Consistent Color-coding)
+
+| Emoji | Color | Meaning | Examples |
+|-------|-------|---------|----------|
+| ✅ | Green | Success | Permission granted, recognizer started, alert shown |
+| ❌ | Red | Error | Permission missing, recognizer failed, alert failed |
+| 🎤 | Blue | Speech Events | Ready for speech, microphone active |
+| 📢 | Yellow | Recognition Results | Partial/final speech results |
+| 🔄 | Cyan | State Transitions | Auto-restarting, retrying, reconnecting |
+| 🚨 | Red | Scam Detection | Keyword matched, alert triggered |
+| 🛑 | Purple | Stopping | Service stopped, resources freed |
+| ⚠️ | Orange | Warnings | Permission denied, retry in progress |
+| 🔧 | Gray | Configuration | Notification setup, intent configuration |
+| ℹ️ | Cyan | Info | General information, status updates |
+
+### DO's & DON'Ts for Internal Debug Terminal
+
+**DO:**
+1. Use LocalBroadcastManager for service-to-UI communication (safe, works even if MainActivity not running)
+2. Always call handler.post() for all TextView updates from background threads (AGENTS.md line 1631)
+3. Use SimpleDateFormat("HH:mm:ss") for all log timestamps (AGENTS.md line 1614)
+4. Limit debug log to 50 lines max (AGENTS.md line 1615)
+5. Register BroadcastReceiver in onStart() and unregister in onStop() (prevent leaks)
+6. Send debug messages from all critical lifecycle methods (startup, permissions, initialization)
+7. Include emoji prefixes for quick visual scanning (✅ ❌ 🎤 📢 🔄 🚨 🛑 ⚠️)
+8. Check if listener/receiver is null before using (may be destroyed)
+9. Use try-catch around all debug callback methods
+10. Auto-scroll to bottom after each append (shows latest events immediately)
+11. Make debug terminal visible by default (helps users understand what app is doing)
+12. Allow user to scroll through old logs without blocking new logs
+13. Use monospace font for aligned columns and better readability
+14. Use green text on black background for high contrast
+15. Verify LocalBroadcastManager initialized before sending (never null if added in onCreate)
+
+**DON'T:**
+1. DON'T use direct Toast messages for debug logging (use debug terminal only)
+2. DON'T call TextView.setText() directly from background threads (always use handler.post)
+3. DON'T assume Exception.getMessage() is not null (check before logging - AGENTS.md line 1638)
+4. DON'T forget to unregister BroadcastReceiver in onStop() (memory leaks)
+5. DON'T assume LocalBroadcast sender and receiver are on same process (they are, but design for safety)
+6. DON'T hardcode timestamps - use SimpleDateFormat with Locale.US
+7. DON'T use colored text for individual messages (green only, consistent with original style)
+8. DON'T log sensitive information (audio content, full phone numbers)
+9. DON'T send debug messages from tight loops (causes performance issues)
+10. DON'T assume MainActivity is running (LocalBroadcast handles gracefully)
+11. DON'T exceed 50 log lines (DebugTerminal auto-removes oldest entries)
+12. DON'T use Log.d() for user-visible events (use onDebugLog() instead)
+13. DON'T forget to flush logs on app exit (they're UI-based, cleared naturally)
+14. DON'T initialize debug UI before setContentView() (causes NPE)
+15. DON'T send duplicate messages within 100ms (can spam the log)
+
+### Testing Checklist for Internal Debug Terminal
+
+- [ ] Install app on Android device
+- [ ] Open MainActivity and verify debug terminal appears at bottom
+- [ ] Verify green text on black background is readable
+- [ ] Verify timestamped entries: "[HH:mm:ss] message"
+- [ ] Trigger incoming call and verify events appear in real-time:
+  - "✅ ScamMonitorService started"
+  - "🔧 Creating foreground notification..."
+  - "✅ RECORD_AUDIO permission verified"
+  - "🎤 Initializing Google Speech Recognizer..."
+  - "✅ Speech Recognizer initialized and listening"
+- [ ] Speak non-scam words and verify "📢 Partial: [text]" appears
+- [ ] Speak scam keyword and verify:
+  - "✅ Final: [text]"
+  - "🚨 SCAM KEYWORD DETECTED: [keyword]"
+  - "✅ Alert shown for: [keyword]"
+- [ ] Verify scroll behavior: new logs appear at bottom, auto-scroll to latest
+- [ ] Scroll up to see old logs without blocking new ones
+- [ ] Verify debug log persists across configuration changes (rotate screen)
+- [ ] Close app and reopen: verify logs are cleared (UI-based, not persistent)
+- [ ] Test error scenario: disconnect WiFi during call
+  - Verify "❌ Error [code]: message" appears
+  - Verify "🔄 Auto-restarting..." message
+- [ ] Test with multiple incoming calls in sequence
+- [ ] Verify no "null pointer" or "undefined" messages (null checks working)
+- [ ] Check memory usage doesn't increase with time (max 50 lines limit working)
+- [ ] Verify emoji prefixes are consistent and visible
+
+### Troubleshooting Internal Debug Terminal Issues
+
+**Problem:** Debug terminal doesn't appear
+- **Check 1:** Verify R.id.debug_scroll_view exists in activity_main.xml
+- **Check 2:** Verify R.id.internal_debug_log exists in activity_main.xml
+- **Check 3:** Verify findViewById() in onCreate() succeeds
+- **Check 4:** Check Logcat for "Error appending log" exceptions
+- **Solution:** Verify layout IDs match exactly, check for NPE in appendLog()
+
+**Problem:** Messages don't appear in real-time
+- **Check 1:** Verify BroadcastReceiver registered in onStart()
+- **Check 2:** Verify MainActivity is in foreground (active)
+- **Check 3:** Check if exception in onReceive() callback
+- **Check 4:** Verify ACTION_DEBUG_LOG constant matches between service and activity
+- **Solution:** Verify receiver registration, check MainActivity is active, verify intent action name
+
+**Problem:** Auto-scroll not working (can't see latest messages)
+- **Check 1:** Verify debugScrollView.post() called after setText()
+- **Check 2:** Verify fullScroll(View.FOCUS_DOWN) is correct method
+- **Check 3:** Check if ScrollView parent layout has conflicting gravity
+- **Solution:** Ensure ScrollView wraps TextView, call scroll in post() block
+
+**Problem:** Old messages appear multiple times (not removed at 50 lines)
+- **Check 1:** Verify MAX_DEBUG_LINES = 50 constant is set
+- **Check 2:** Verify split("\n") and StringBuilder logic is correct
+- **Check 3:** Check if line count calculation off-by-one error
+- **Solution:** Add debug logging in trim logic to verify line count
+
+**Problem:** Debug terminal takes up too much space (needs more app UI visible)
+- **Check 1:** Verify layout_weight="0.4" (40% of screen)
+- **Check 2:** Can reduce to layout_weight="0.25" (25% of screen)
+- **Check 3:** Can use different distribution between fragments and log
+- **Solution:** Adjust layout_weight based on UX needs
+
+### Benefits Over Floating WindowManager Overlay
+
+| Feature | WindowManager Overlay | Internal Debug Terminal |
+|---------|----------------------|--------------------------|
+| **Moto/Redmi Compat** | ❌ Crashes | ✅ Works perfectly |
+| **Permission** | ❌ SYSTEM_ALERT_WINDOW required | ✅ No overlay permission |
+| **Lifecycle** | ⚠️ Complex cleanup | ✅ Simple UI lifecycle |
+| **Rendering** | ⚠️ GPU issues on MIUI | ✅ Standard Android view |
+| **User Control** | ❌ Hard to dismiss | ✅ User can scroll/interact |
+| **Thread Safety** | ⚠️ Complex sync | ✅ handler.post() pattern |
+| **Testing** | ❌ Difficult to debug | ✅ Easy to inspect |
+| **Performance** | ✅ Lightweight | ✅ Lightweight |
+| **Debuggability** | ❌ Invisible on some ROMs | ✅ Always visible |
+
+---
+
 ## Build Commands
 ```bash
 ./gradlew assembleDebug    # Debug build
