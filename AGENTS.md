@@ -48,6 +48,24 @@ ScamShield is an Android app that detects scam calls in real-time using Google O
 14. Use Google On-Device Speech Recognizer via `SpeechRecognizer.createOnDeviceSpeechRecognizer(context)`
 15. Set `RecognizerIntent.EXTRA_PREFER_OFFLINE = true` for offline-first operation
 16. Implement auto-restart listening in `onResults()` and `onError()` methods for continuous monitoring
+17. **CRITICAL - Android 14 (API 34) Foreground Service Requirements:**
+    a. **Start service from MainActivity in foreground state (visible on screen)**
+       - Service MUST be started while MainActivity.onStart() is active (visible to user)
+       - Service MUST NOT be started from Fragment or background context
+       - Service MUST NOT be started from broadcast receiver or other background components
+       - Pattern: User grants permission → MainActivity.onRequestPermissionsResult() → startForegroundService()
+    b. **Call startForeground() within 5 seconds of onStartCommand()**
+       - Must be first operation in onStartCommand() (line 1)
+       - Must complete notification setup within 5000ms
+       - Add timing logs: `long startTime = System.currentTimeMillis(); startForegroundWithNotification(); long elapsed = System.currentTimeMillis() - startTime;`
+       - Log warning if elapsed > 5000ms
+    c. **Manifest declarations are correct:**
+       - ✅ `<uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />`
+       - ✅ `<service android:foregroundServiceType="microphone|specialUse">`
+       - ✅ `<property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" ... />`
+    d. **Ensure startForeground() call includes type flag:**
+       - ✅ API Q+ (29): `startForeground(ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)`
+       - ✅ API O-P (26-28): `startForeground(ID, notification)` (no type flag)
 17. Display persistent notification with "ScamShield Active" title and "Protecting you from fraud calls..." text
 18. Show Toast feedback "📢 Heard: [text]" for every recognized word (onPartialResults)
 19. Implement 30-second debounce between alert notifications to prevent spam
@@ -69,6 +87,15 @@ ScamShield is an Android app that detects scam calls in real-time using Google O
 13. DON'T assume Toast will work in background - always use handler.post() for UI updates
 14. DON'T assume TelecomManager.endCall() is available - wrap in try-catch
 15. DON'T use deprecated WindowManager flags without API level fallback
+16. **CRITICAL - Android 14 (API 34) Foreground Service Violations:**
+    - DON'T start service from Fragment (must start from Activity in foreground)
+    - DON'T start service from BroadcastReceiver or background context
+    - DON'T start service from onStop()/onPause() callbacks (Activity not visible)
+    - DON'T call startForeground() after >5 seconds elapsed from onStartCommand()
+    - DON'T forget to include ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE flag on API Q+
+    - DON'T skip notification channel creation on Android 8.0+ (will crash)
+    - DON'T assume startForeground() will work without foreground notification
+    - DON'T ignore timing requirements - measure and log elapsed time
 
 ## Common Issues & Solutions
 

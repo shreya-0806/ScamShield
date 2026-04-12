@@ -118,12 +118,27 @@ public class ScamMonitorService extends Service implements SpeechListener {
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         Log.d(TAG, "Service onStartCommand");
-        sendDebugLogBroadcast("✅ ScamMonitorService started");
+        long onStartCommandTime = System.currentTimeMillis();
+        
+        sendDebugLogBroadcast("✅ ScamMonitorService.onStartCommand() called");
+        sendDebugLogBroadcast("[ANDROID 14] Starting foreground notification (must be within 5 seconds)");
         
         // CRITICAL: Start foreground notification FIRST (must be within 5 seconds)
+        // Android 14 requirement: startForeground() must be called before microphone access
         if (!isServiceRunning) {
             isServiceRunning = true;
+            long notificationStartTime = System.currentTimeMillis();
             startForegroundWithNotification();
+            long notificationEndTime = System.currentTimeMillis();
+            
+            long elapsedTime = notificationEndTime - onStartCommandTime;
+            Log.i(TAG, "⏱️ Foreground notification setup took " + elapsedTime + "ms (max: 5000ms)");
+            if (elapsedTime > 5000) {
+                Log.w(TAG, "⚠️ WARNING: Foreground notification took > 5 seconds!");
+                sendDebugLogBroadcast("⚠️ WARNING: Notification setup took " + elapsedTime + "ms (max: 5000ms)");
+            } else {
+                sendDebugLogBroadcast("✅ Notification setup completed in " + elapsedTime + "ms");
+            }
         }
         
         // CHECK: Is scam detection enabled in SharedPreferences?
@@ -152,7 +167,11 @@ public class ScamMonitorService extends Service implements SpeechListener {
         // This avoids race conditions during service startup
         handler.post(() -> {
             Log.d(TAG, "Initializing speech recognition on main thread");
+            long initStartTime = System.currentTimeMillis();
             initializeSpeechRecognition();
+            long initEndTime = System.currentTimeMillis();
+            
+            Log.i(TAG, "⏱️ Speech recognition initialization took " + (initEndTime - initStartTime) + "ms");
         });
         
         return START_STICKY;

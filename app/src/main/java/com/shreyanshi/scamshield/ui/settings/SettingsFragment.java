@@ -208,25 +208,20 @@ public class SettingsFragment extends Fragment {
     }
 
     /**
-     * Start ScamMonitorService when user enables scam detection.
-     * Uses startForegroundService() on Android O+ with proper notification.
+     * Enable scam protection by requesting microphone permissions.
+     * 
+     * CRITICAL for Android 14 compliance (AGENTS.md line 223):
+     * Service is NOT started from Fragment. Instead:
+     * 1. Fragment requests RECORD_AUDIO permission via ActivityResultLauncher
+     * 2. MainActivity.onRequestPermissionsResult() receives callback
+     * 3. MainActivity starts service from foreground Activity context
+     * 
+     * This ensures service starts while MainActivity is visible (required for Android 14).
      */
     private void startScamProtection() {
-        try {
-            Context context = requireContext();
-            Intent serviceIntent = new Intent(context, com.shreyanshi.scamshield.services.ScamMonitorService.class);
-            
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(serviceIntent);
-            } else {
-                context.startService(serviceIntent);
-            }
-            
-            android.util.Log.i("SettingsFragment", "✅ ScamMonitorService started");
-        } catch (Exception e) {
-            android.util.Log.e("SettingsFragment", "❌ Error starting service: " + e.getMessage());
-            Toast.makeText(requireContext(), "Error starting scam protection", Toast.LENGTH_SHORT).show();
-        }
+        // IMPORTANT: Service will be started by MainActivity when RECORD_AUDIO is granted
+        // This ensures service starts from foreground Activity (Android 14 requirement)
+        requestScamDetectionPermissions();
     }
 
     /**
