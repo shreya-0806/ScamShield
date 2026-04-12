@@ -59,6 +59,13 @@ public class GoogleSpeechRecognizer implements SpeechProcessor, RecognitionListe
         // Check if Google Speech is available on this device
         if (!SpeechRecognizer.isRecognitionAvailable(context)) {
             Log.e(TAG, "❌ Google Speech Recognition not available on this device");
+            if (listener != null) {
+                try {
+                    listener.onDebugLog("❌ Google Speech not available on this device");
+                } catch (Exception e) {
+                    Log.d(TAG, "Debug log callback failed: " + e.getMessage());
+                }
+            }
             return;
         }
         
@@ -67,13 +74,28 @@ public class GoogleSpeechRecognizer implements SpeechProcessor, RecognitionListe
             speechRecognizer = SpeechRecognizer.createOnDeviceSpeechRecognizer(context);
             speechRecognizer.setRecognitionListener(this);
             Log.i(TAG, "✅ Google On-Device Speech Recognizer created");
+            if (listener != null) {
+                try {
+                    listener.onDebugLog("✅ Google On-Device Speech Recognizer created");
+                } catch (Exception e) {
+                    Log.d(TAG, "Debug log callback failed: " + e.getMessage());
+                }
+            }
             
             // Setup recognition intent with proper configuration
             setupRecognizerIntent();
             
         } catch (Exception e) {
-            Log.e(TAG, "❌ Failed to create speech recognizer: " + e.getMessage(), e);
+            Log.e(TAG, "❌ Failed to create speech recognizer: " + e.getClass().getSimpleName() + " - " + e.getMessage(), e);
             speechRecognizer = null;
+            if (listener != null) {
+                try {
+                    String errorMsg = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
+                    listener.onDebugLog("❌ Speech Recognizer init failed: " + errorMsg);
+                } catch (Exception e2) {
+                    Log.d(TAG, "Debug log callback failed: " + e2.getMessage());
+                }
+            }
         }
     }
     
