@@ -16,6 +16,7 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ANSWER_PHONE_CALLS" />
     <uses-permission android:name="android.permission.BIND_INCALL_SERVICE" />
+    <uses-permission android:name="android.permission.BIND_TELECOM_CONNECTION_SERVICE" />
     <uses-permission android:name="android.permission.MANAGE_ONGOING_CALLS" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
 
@@ -139,6 +140,16 @@
             android:name="com.shreyanshi.scamshield.services.CallRecordingService"
             android:enabled="true"
             android:exported="false" />
+
+        <!-- CRITICAL: ConnectionService for Telecom framework (Android 10+) -->
+        <service
+            android:name="com.shreyanshi.scamshield.services.ScamShieldConnectionService"
+            android:exported="true"
+            android:permission="android.permission.BIND_TELECOM_CONNECTION_SERVICE">
+            <intent-filter>
+                <action android:name="android.telecom.ConnectionService" />
+            </intent-filter>
+        </service>
 
         <!-- InCallService required for default dialer role (Android 10+) -->
         <service

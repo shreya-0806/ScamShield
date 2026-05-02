@@ -70,7 +70,8 @@ public class InCallActivity extends AppCompatActivity {
     private View avatarBackground;
     private Button btnAnswer;
     private Button btnEndCall;
-private ImageButton btnMute;
+    private Button btnEndCallLarge;  // Large red button for active calls
+    private ImageButton btnMute;
     private ImageButton btnSpeaker;
     private ImageButton btnHold;
     private ImageButton btnRecord;
