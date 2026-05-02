@@ -43,8 +43,12 @@ public class ScamMonitorService extends Service implements SpeechListener {
     
     public static final String ACTION_START = "com.shreyanshi.scamshield.ACTION_START_MONITORING";
     public static final String ACTION_STOP = "com.shreyanshi.scamshield.ACTION_STOP_MONITORING";
+    public static final String ACTION_CALL_ACTIVE = "com.shreyanshi.scamshield.ACTION_CALL_ACTIVE";
     public static final String ACTION_DEBUG_LOG = "com.shreyanshi.scamshield.DEBUG_LOG";
     public static final String EXTRA_DEBUG_MESSAGE = "log_message";
+    public static final String EXTRA_CALL_NUMBER = "call_number";
+    public static final String EXTRA_FROM_INCALL = "from_incall";
+    public static final String EXTRA_CALL_ACTIVE = "call_active";
     private static final long ALERT_DEBOUNCE_MS = 30000;
 
     private static final String CHANNEL_ID = "scam_monitor_channel";
@@ -162,15 +166,30 @@ public class ScamMonitorService extends Service implements SpeechListener {
         if (intent != null) {
             currentNumber = intent.getStringExtra("number");
         }
-
+        
+        // Check if call is active (set by InCallService when STATE_ACTIVE)
+        boolean callActive = intent != null && intent.getBooleanExtra(EXTRA_CALL_ACTIVE, false);
+        
+        if (!callActive) {
+            Log.i(TAG, "Call not yet active - delaying speech init until STATE_ACTIVE");
+            sendDebugLogBroadcast("⏳ Waiting for call to become active...");
+        }
+        
         // CRITICAL: Initialize speech recognition on main thread using Handler
-        // This avoids race conditions during service startup
+        // Only start if call is active to prevent ambient listening
         handler.post(() -> {
             Log.d(TAG, "Initializing speech recognition on main thread");
             long initStartTime = System.currentTimeMillis();
-            initializeSpeechRecognition();
-            long initEndTime = System.currentTimeMillis();
             
+            if (!callActive) {
+                // Wait for broadcast to trigger actual start
+                Log.i(TAG, "⏳ Will initialize speech when call becomes active");
+                sendDebugLogBroadcast("⏳ Speech will start after call connects");
+            } else {
+                initializeSpeechRecognition();
+            }
+            
+            long initEndTime = System.currentTimeMillis();
             Log.i(TAG, "⏱️ Speech recognition initialization took " + (initEndTime - initStartTime) + "ms");
         });
         
@@ -462,5 +481,22 @@ public class ScamMonitorService extends Service implements SpeechListener {
     }
 
     @Nullable
-    @Override public IBinder onBind(Intent intent) { return null; }
+    @Override public IBinder onBind(Intent intent) { return localBinder; }
+    
+    /**
+     * Local Binder for service binding
+     */
+    public class LocalBinder extends android.os.Binder {
+        public ScamMonitorService getService() {
+            return ScamMonitorService.this;
+        }
+    }
+    private final LocalBinder localBinder = new LocalBinder();
+    
+    /**
+     * Check if service is currently running
+     */
+    public boolean isRunning() {
+        return isServiceRunning;
+    }
 }

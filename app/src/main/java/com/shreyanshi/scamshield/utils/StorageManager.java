@@ -9,6 +9,7 @@ public class StorageManager {
     private static final String KEY_DARK_MODE = "dark_mode_enabled";
     private static final String KEY_SOUNDS = "sounds_enabled";
     private static final String KEY_VIBRATION = "vibration_enabled";
+    private static final String KEY_AUTO_RECORD = "auto_record";
 
     private final SharedPreferences sharedPreferences;
 
@@ -48,5 +49,14 @@ public class StorageManager {
 
     public boolean isVibrationEnabled() {
         return sharedPreferences.getBoolean(KEY_VIBRATION, true);
+    }
+    
+    // Auto-record setting
+    public void setAutoRecordEnabled(boolean enabled) {
+        sharedPreferences.edit().putBoolean(KEY_AUTO_RECORD, enabled).apply();
+    }
+    
+    public boolean isAutoRecordEnabled() {
+        return sharedPreferences.getBoolean(KEY_AUTO_RECORD, false);
     }
 }

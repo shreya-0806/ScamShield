@@ -19,6 +19,7 @@ import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
 import com.shreyanshi.scamshield.R;
+import com.shreyanshi.scamshield.activities.MainActivity;
 
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
@@ -104,6 +105,10 @@ public class HistoryFragment extends Fragment {
         }
 
         adapter = new HistoryAdapter(callLogs);
+        // FIX: Pass MainActivity reference for protected calls
+        if (getActivity() instanceof MainActivity) {
+            adapter.setMainActivity((MainActivity) getActivity());
+        }
         recyclerView.setAdapter(adapter);
     }
 

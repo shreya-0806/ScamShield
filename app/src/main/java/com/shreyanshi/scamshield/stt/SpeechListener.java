@@ -17,4 +17,12 @@ public interface SpeechListener {
      * @param debugMessage Debug information (e.g., "Partial: hello", "Error: timeout")
      */
     void onDebugLog(String debugMessage);
+    
+    /**
+     * FIX 4: Called when audio refresh is needed (Error 7 or Error 9)
+     * Toggles speakerphone to force audio stream refresh during active calls
+     */
+    default void onAudioRefreshNeeded() {
+        // Default implementation does nothing - override in service to toggle speaker
+    }
 }

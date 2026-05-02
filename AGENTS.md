@@ -71,6 +71,25 @@ ScamShield is an Android app that detects scam calls in real-time using Google O
 19. Implement 30-second debounce between alert notifications to prevent spam
 20. Use white monochrome notification icon (ic_notification.xml) - never use colored icons
 
+## Master Logic & Keyword Expansion (Android 15 Fix)
+21. Bridge speech results to detector: Extract text + send to terminal + callback to listener
+    - `onPartialResults()`: listener.onSpeechRecognized(text) + listener.onDebugLog("📢 LIVE TEXT: " + text)
+    - `onResults()`: listener.onSpeechRecognized(text) + listener.onDebugLog("📢 LIVE TEXT: " + text)
+22. Use universal scam keyword array with 40+ keywords:
+    - `String[] SCAM_KEYWORDS = {"otp", "cvv", "password", "pin", "bank", "kyc", "lottery", "blocked", "suspended", "gift card", "customer care", ...}`
+23. Case-insensitive keyword matching: `if (normalizedText.contains(keyword.toLowerCase()))`
+24. Collect ALL matched keywords and log each: `sendDebugLogBroadcast("🚨 ALERT: Scam word [" + keyword + "] detected!")`
+
+## Default Dialer Role (Android 10+)
+25. Request default dialer role on EVERY app open using RoleManager
+    - Call `requestDefaultDialerRole()` in `onCreate()` after permissions
+    - Use `RoleManager.createRequestRoleIntent(RoleManager.ROLE_DIALER)` for Android 10+
+    - Log `📢 Requesting Default Dialer Role...` before calling
+    - App appears in "Default apps > Phone app" after user accepts
+26. Manifest must have InCallService with BIND_INCALL_SERVICE permission
+    - `<service android:permission="android.permission.BIND_INCALL_SERVICE">`
+    - `<intent-filter><action android:name="android.telecom.InCallService" /></intent-filter>`
+
 ## DON'T
 1. DON'T require SYSTEM_ALERT_WINDOW (causes install issues on Moto devices)
 2. DON'T permanently save audio recordings - only process in memory
@@ -87,6 +106,10 @@ ScamShield is an Android app that detects scam calls in real-time using Google O
 13. DON'T assume Toast will work in background - always use handler.post() for UI updates
 14. DON'T assume TelecomManager.endCall() is available - wrap in try-catch
 15. DON'T use deprecated WindowManager flags without API level fallback
+16. **CRITICAL - Android 15 Foreground Service Violations:**
+    - DON'T start service without FOREGROUND_SERVICE_TYPE_MICROPHONE on API 34+
+    - DON'T skip call to startForeground() within 5 seconds of onStartCommand()
+    - DON'T forget to log timing: `elapsed = System.currentTimeMillis() - startTime`
 16. **CRITICAL - Android 14 (API 34) Foreground Service Violations:**
     - DON'T start service from Fragment (must start from Activity in foreground)
     - DON'T start service from BroadcastReceiver or background context
@@ -96,6 +119,1120 @@ ScamShield is an Android app that detects scam calls in real-time using Google O
     - DON'T skip notification channel creation on Android 8.0+ (will crash)
     - DON'T assume startForeground() will work without foreground notification
     - DON'T ignore timing requirements - measure and log elapsed time
+
+## Default Dialer Role & Restricted Settings (Android 13+)
+
+### DO (Default Dialer)
+1. **DO** request dialer role on every app open to handle Restricted Settings failures
+2. **DO** use `RoleManager.createRequestRoleIntent(RoleManager.ROLE_DIALER)` for Android 10+
+3. **DO** add fallback manual settings dialog when RoleManager fails (Android 13+ Restricted Settings)
+4. **DO** include DIAL intent filters for both `tel:` and empty schemes in MainActivity
+5. **DO** add `android.app.dialer.default=true` metadata in MainActivity
+6. **DO** add `android.telecom.IN_CALL_SERVICE_UI` and `android.telecom.IN_CALL_SERVICE_RINGING` meta-data in InCallService
+7. **DO** handle `onActivityResult()` to detect when user accepts/rejects dialer role
+
+### DON'T (Default Dialer)
+1. **DON'T** skip manual fallback when RoleManager fails on Moto/Redmi devices
+2. **DON'T** assume programmatic dialer role request works on Android 13+ (Restricted Settings blocks it)
+3. **DON'T** stop CallReceiver fallback - it works without dialer role
+4. **DON'T** use `Settings.ACTION_DEFAULT_APPS_SETTINGS` - it's not a public API (use ACTION_APPLICATION_DETAILS_SETTINGS fallback)
+
+## Voice Call Source & Error Handling Fixes
+
+### Fix 0: High-Priority Speakerphone Bridge (Speaker Echo Loop)
+**Problem**: MediaProjection is denied and AudioRecord returns -2 (ERROR_BAD_VALUE). Phone app blocks microphone during calls.
+**Solution**: Route call audio to SPEAKER - the physical microphone can then "hear" the speaker output (acoustic echo loop)
+
+### Fix 1: MediaProjection Foreground Service Lifecycle (Android 14+)
+**Problem**: SecurityException for MEDIA_PROJECTION - foreground service not started in correct order
+**Solution**: Start service FIRST, then pass MediaProjection data
+
+```java
+// MainActivity.onActivityResult - CRITICAL ORDER
+if (resultCode == RESULT_OK && data != null) {
+    // Step 1: Start foreground service FIRST (satisfies Android 14 eligible state)
+    startForegroundService(serviceIntent);
+    
+    // Step 2: Then broadcast MediaProjection data
+    broadcastMediaProjectionData(data);
+}
+
+// ScamMonitorService.onStartCommand - startForeground within 5 seconds
+long startTime = System.currentTimeMillis();
+startForegroundWithNotification();
+long elapsed = System.currentTimeMillis() - startTime;
+Log.i(TAG, "⏱️ startForeground in " + elapsed + "ms");
+
+// AndroidManifest.xml - add mediaProjection to foregroundServiceType
+android:foregroundServiceType="mediaProjection|microphone|phoneCall"
+```
+
+### Fix 2: Force Voice Call Source (VOICE_CALL = 4)
+**Problem**: SpeechRecognizer defaults to Standard Mic (1) which is blocked during active calls
+**Solution**: Use `intent.putExtra("android.speech.extra.AUDIO_SOURCE", 4)` (VOICE_CALL)
+
+```java
+// In GoogleSpeechRecognizer.setupRecognizerIntent()
+try {
+    recognizerIntent.putExtra("android.speech.extra.AUDIO_SOURCE", 4); // VOICE_CALL = 4
+    Log.i(TAG, "🔊 Audio source set to VOICE_CALL (4) - accessing Telecom stream");
+} catch (Exception e) {
+    Log.w(TAG, "Could not set VOICE_CALL audio source: " + e.getMessage());
+}
+```
+
+### Fix 2: Handle Security Bypass (Wait for VOICE_CALL stream)
+**Problem**: App shows "Security Bypass Active: Listening via Standard Mic" when Standard Mic is silent
+**Solution**: Remove fallback message - wait for VOICE_CALL stream to become available
+
+```java
+// In MainActivity START PROTECTION button click
+// REMOVED: appendLog("🛡️ Security Bypass Active: Listening via Standard Mic");
+// ADDED:
+appendLog("🛡️ Protection Active: Waiting for call audio stream...");
+```
+
+### Fix 3: On-Device Recognition (EXTRA_PREFER_OFFLINE)
+**Problem**: Google cloud recognizer fails during VoLTE/Wi-Fi calling (data connection used by call)
+**Solution**: Use `EXTRA_PREFER_OFFLINE = true` for on-device model (already in code)
+
+```java
+// In GoogleSpeechRecognizer.setupRecognizerIntent()
+recognizerIntent.putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true);
+```
+
+### Fix 4: Error 7/9 Handling (Speakerphone Toggle)
+**Problem**: No Match (7) or Permissions (9) errors leave audio stream stuck
+**Solution**: Toggle speakerphone to force audio refresh
+
+```java
+// In GoogleSpeechRecognizer.onError()
+if (errorCode == SpeechRecognizer.ERROR_NO_MATCH 
+        || errorCode == SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS) {
+    Log.w(TAG, "🔄 Error [" + errorCode + "] - triggering speakerphone toggle");
+    if (listener != null) {
+        listener.onAudioRefreshNeeded();
+    }
+}
+
+// In ScamMonitorService - implement onAudioRefreshNeeded()
+@Override
+public void onAudioRefreshNeeded() {
+    AudioManager audioManager = (AudioManager) getSystemService(AUDIO_SERVICE);
+    audioManager.setSpeakerphoneOn(true);
+    handler.postDelayed(() -> audioManager.setSpeakerphoneOn(false), 500);
+}
+```
+
+### DO (Voice Call Source)
+1. **DO** use `android.speech.extra.AUDIO_SOURCE` with value 4 (VOICE_CALL) for call audio
+2. **DO** set `EXTRA_PREFER_OFFLINE = true` for on-device recognition stability
+3. **DO** implement `onAudioRefreshNeeded()` in ScamMonitorService to toggle speaker
+4. **DO** wait for VOICE_CALL stream instead of falling back to Standard Mic silently
+5. **DO** use 5-second retry delay for Error 9 (INSUFFICIENT_PERMISSIONS)
+6. **DO** force speakerphone ON in InCallService when call is ACTIVE - enables acoustic echo loop
+7. **DO** disable AcousticEchoCanceler, NoiseSuppressor, and AutomaticGainControl on AudioRecord
+8. **DO** add MIC as final fallback - works with speakerphone echo loop
+9. **DO** turn OFF speakerphone when call ends (cleanup)
+
+### DON'T (Voice Call Source)
+1. **DON'T** use Standard Mic (1) during active calls - it's blocked by Phone app
+2. **DON'T** claim "Security Bypass" when using Standard Mic (it's not bypassing anything)
+3. **DON'T** auto-restart immediately on Error 9 - it needs longer delay (5 seconds)
+4. **DON'T** forget to add VOICE_CALL intent in AndroidManifest.xml queries
+5. **DON'T** assume VOICE_CALL works without Default Dialer role
+6. **DON'T** leave speakerphone ON after call ends - always cleanup
+7. **DON'T** skip disabling AEC/NS/AGC - they filter out speaker as "noise"
+
+## InCallService & InCallActivity Implementation
+
+### DO (InCallService)
+1. **DO** register Call.Callback to track state changes (onStateChanged)
+2. **DO** launch InCallActivity when call is added (onCallAdded)
+3. **DO** update InCallActivity on state changes (RINGING → ACTIVE → DISCONNECTED)
+4. **DO** start ScamMonitorService only when call becomes ACTIVE (not on RINGING)
+5. **DO** stop ScamMonitorService when call is DISCONNECTED
+6. **DO** use Call.answer(), Call.reject(), and Call.disconnect() for call control
+7. **DO** add LocalBinder to ScamMonitorService for InCallActivity binding
+8. **DO** set AudioManager.MODE_IN_COMMUNICATION on STATE_ACTIVE for speech recognition
+9. **DO** use BroadcastReceiver to handle answer/disconnect from InCallActivity
+10. **DO** bind to ScamMonitorService in onCallAdded to create security bridge
+
+### DON'T (InCallService)
+1. **DON'T** forget to unregister Call.Callback in onDestroy()
+2. **DON'T** use Call.STATE_REJECTED or STATE_PULLING (not available on all API levels)
+3. **DON'T** launch multiple InCallActivity instances (use FLAG_ACTIVITY_CLEAR_TOP)
+4. **DON'T** start speech recognition on RINGING - wait for ACTIVE state
+5. **DON'T** forget to set audio mode before starting speech recognition
+6. **DON'T** skip service binding - Android treats InCallService and MonitorService as separate apps
+
+### Call Lifecycle Sync (Ghost Call Fix)
+
+**Problem**: Ghost calls where hang-up button does nothing and UI doesn't close when other person hangs up.
+
+**Solution**: Implement static Call reference + Call.Callback listener + broadcast on DISCONNECTED
+
+```java
+// In ScamShieldInCallService.java - STATIC reference for InCallActivity access
+public static Call currentCall = null;
+public static Call currentCallInstance = null;
+
+// In onCallAdded - set static reference
+currentCallInstance = call;
+currentCall = call;
+
+// In handleCallStateChange - on DISCONNECTED:
+case Call.STATE_DISCONNECTED:
+    // Clear static reference
+    currentCallInstance = null;
+    currentCall = null;
+    // Reset audio mode
+    audioManager.setMode(AudioManager.MODE_NORMAL);
+    audioManager.setSpeakerphoneOn(false);
+    // Broadcast DISCONNECTED to close InCallActivity
+    broadcastCallDisconnected();
+    break;
+
+// Broadcast method
+private void broadcastCallDisconnected() {
+    Intent intent = new Intent(ACTION_CALL_DISCONNECTED);
+    LocalBroadcastManager.getInstance(this).sendBroadcast(intent);
+}
+
+// In InCallActivity.java - use static reference
+private void endCall() {
+    Call activeCall = ScamShieldInCallService.currentCall;
+    if (activeCall != null) {
+        activeCall.disconnect();
+    }
+    finish();
+}
+
+// Broadcast receiver handles CALL_DISCONNECTED
+filter.addAction(ScamShieldInCallService.ACTION_CALL_DISCONNECTED);
+if (ScamShieldInCallService.ACTION_CALL_DISCONNECTED.equals(action)) {
+    finish();
+}
+```
+
+### DO (Call Lifecycle Sync)
+1. **DO** create static `public static Call currentCall` in ScamShieldInCallService
+2. **DO** set static reference in onCallAdded
+3. **DO** implement Call.Callback with onStateChanged
+4. **DO** broadcast ACTION_CALL_DISCONNECTED on STATE_DISCONNECTED
+5. **DO** use static reference in InCallActivity.endCall()
+6. **DO** register broadcast receiver for ACTION_CALL_DISCONNECTED
+
+### DON'T (Call Lifecycle Sync)
+1. **DON'T** use local Call variable in InCallActivity (it's never set)
+2. **DON'T** skip clearing static reference on DISCONNECTED (causes reuse bugs)
+3. **DON'T** forget to reset audio mode on call end (next call has wrong mode)
+
+### Call Control & Button Fixes
+
+**Problem**: Double-click hang-up, hardware toggles not working, recording not stopping on call end.
+
+**Solution**: Dynamic button listeners using static reference + MediaRecorder lifecycle
+
+```java
+// In InCallActivity - Dynamic Speaker Toggle
+private void toggleSpeaker() {
+    AudioManager audioManager = (AudioManager) getSystemService(AUDIO_SERVICE);
+    if (audioManager == null) return;
+    
+    // CRITICAL: Read current state from system
+    boolean currentlyOn = audioManager.isSpeakerphoneOn();
+    
+    if (currentlyOn) {
+        audioManager.setSpeakerphoneOn(false);
+        audioManager.setMode(AudioManager.MODE_IN_COMMUNICATION);
+        // Update UI icons
+    } else {
+        audioManager.setSpeakerphoneOn(true);
+        audioManager.setMode(AudioManager.MODE_IN_COMMUNICATION);
+    }
+}
+
+// Hold with static reference - no popup checks
+private void toggleHold() {
+    Call activeCall = ScamShieldInCallService.currentCall;
+    if (activeCall == null) return;
+    
+    isOnHold = !isOnHold;
+    if (isOnHold) activeCall.hold();
+    else activeCall.unhold();
+}
+
+// Recording with MediaRecorder lifecycle
+private boolean isRecording = false;
+private MediaRecorder mediaRecorder;
+
+private void toggleRecord() {
+    if (isRecording) {
+        // Stop and save
+        mediaRecorder.stop();
+        mediaRecorder.release();
+    } else {
+        // Start recording
+        mediaRecorder = new MediaRecorder();
+        mediaRecorder.setAudioSource(MediaRecorder.AudioSource.VOICE_COMMUNICATION);
+        mediaRecorder.prepare();
+        mediaRecorder.start();
+    }
+    isRecording = !isRecording;
+}
+
+// In ScamShieldInCallService - Auto-record check
+public void onCallAdded(Call call) {
+    SharedPreferences prefs = getSharedPreferences("ScamShieldPrefs", MODE_PRIVATE);
+    if (prefs.getBoolean("auto_record", false)) {
+        Intent recordIntent = new Intent("com.shreyanshi.scamshield.ACTION_START_RECORDING");
+        LocalBroadcastManager.getInstance(this).sendBroadcast(recordIntent);
+    }
+}
+
+// In ScamShieldInCallService - Auto-stop on call removed
+public void onCallRemoved(Call call) {
+    Intent stopRecordIntent = new Intent("com.shreyanshi.scamshield.ACTION_STOP_RECORDING");
+    LocalBroadcastManager.getInstance(this).sendBroadcast(stopRecordIntent);
+}
+```
+
+### DO (Call Control)
+1. **DO** use AudioManager.isSpeakerphoneOn() for dynamic state detection
+2. **DO** use static ScamShieldInCallService.currentCall in all button listeners
+3. **DO** implement stopRecording() for auto-stop on call end
+4. **DO** broadcast ACTION_START_RECORDING/ACTION_STOP_RECORDING from InCallService
+5. **DO** add auto_record preference in StorageManager
+
+### DON'T (Call Control)
+1. **DON'T** check callState != STATE_ACTIVE in button listeners (use null check)
+2. **DON'T** show Toast popup for invalid state (log only)
+3. **DON'T** leave MediaRecorder running when call ends (always call stop())
+
+### Direct Hardware Fixes
+
+**Problem**: Wrong numbers, buttons stuck, hang-up doesn't work.
+
+**Solution**: Direct hardware reads without boolean flags
+
+```java
+// Speaker - Direct hardware read
+private void toggleSpeaker() {
+    AudioManager am = (AudioManager) getSystemService(AUDIO_SERVICE);
+    boolean on = am.isSpeakerphoneOn();
+    am.setSpeakerphoneOn(!on);
+    am.setMode(AudioManager.MODE_IN_COMMUNICATION);
+    // Update UI based on actual state
+}
+
+// Hold - Direct Telecom state
+private void toggleHold() {
+    Call call = ScamShieldInCallService.currentCall;
+    if (call == null) return;
+    if (call.getState() == Call.STATE_HOLDING) {
+        call.unhold();
+    } else {
+        call.hold();
+    }
+}
+
+// Hang-up - Immediate finish
+private void endCall() {
+    Call call = ScamShieldInCallService.currentCall;
+    if (call != null) call.disconnect();
+    finish(); // IMMEDIATE - no waiting
+}
+
+// Recording - External files dir
+private void toggleRecord() {
+    File dir = getExternalFilesDir(null);
+    // Use VOICE_COMMUNICATION
+}
+```
+
+### DO (Direct Hardware)
+1. **DO** use isSpeakerphoneOn() for UI state
+2. **DO** use call.getState() == STATE_HOLDING for hold
+3. **DO** call disconnect() then finish() immediately
+4. **DO** use getExternalFilesDir() for recordings
+5. **DO** use AudioSource.VOICE_COMMUNICATION
+
+### STEP 1-4 Implementation Summary
+
+**STEP 1: Call Lifecycle & Crash Fix**
+- Added ACTION_FINISH_UI broadcast in Call.Callback on STATE_DISCONNECTED
+- InCallActivity registers receiver for ACTION_FINISH_UI and calls finishAndRemoveTask()
+
+**STEP 2: Hold & UI Persistency**
+- Hold button uses call.getState() == STATE_HOLDING for direct Telecom state
+- onBackPressed() uses moveTaskToBack(true) to keep call active
+- Ongoing notification with PendingIntent to re-open UI
+
+**STEP 3: Button Visibility & Audio**
+- Answer button hidden when STATE_ACTIVE
+- Uses audioManager.setMode(MODE_IN_COMMUNICATION) at call start
+
+### UI State Transition Fix (Answer/Decline Buttons Stay Visible)
+
+**Problem**: Answer and Decline buttons don't disappear after call is answered - UI stays in RINGING state
+
+**Solution**: 
+1. ScamShieldInCallService broadcasts ACTION_CALL_ACTIVE when state hits STATE_ACTIVE
+2. InCallActivity listens for ACTION_CALL_ACTIVE and calls updateUIForCallState()
+3. updateUIForCallState() hides btnAnswer, shows bottomSection (Mute/Speaker/End buttons), sets audio mode
+
+```java
+// In InCallActivity - BroadcastReceiver handles ACTION_CALL_ACTIVE
+else if (ScamShieldInCallService.ACTION_CALL_ACTIVE.equals(action)) {
+    callState = STATE_ACTIVE;
+    updateUIForCallState();
+}
+
+// In InCallActivity - updateUIForCallState() handles visibility
+case STATE_ACTIVE:
+    btnAnswer.setVisibility(View.GONE);
+    if (bottomSection != null) bottomSection.setVisibility(View.VISIBLE);
+    // Audio sync
+    AudioManager audioManager = (AudioManager) getSystemService(AUDIO_SERVICE);
+    audioManager.setMode(AudioManager.MODE_IN_COMMUNICATION);
+    break;
+```
+
+**DO:**
+1. **DO** broadcast ACTION_CALL_ACTIVE from InCallService when STATE_ACTIVE
+2. **DO** register receiver for ACTION_CALL_ACTIVE in InCallActivity.onResume()
+3. **DO** hide btnAnswer in STATE_ACTIVE case
+4. **DO** show bottomSection (call controls) in STATE_ACTIVE case
+5. **DO** call audioManager.setMode(MODE_IN_COMMUNICATION) when transitioning to ACTIVE
+
+**DON'T:**
+1. **DON'T** assume UI auto-updates when call state changes (must manually update)
+2. **DON'T** skip audio mode sync (voice path won't open without it)
+
+### Phase 1: Real-Time Button Swapping + Phase 2: Instant Close
+
+**Problem**: 
+- Green/Red buttons stay visible after call is answered
+- Activity requires TWO CLICKS to close after call ends
+
+**Solution**: PHASE 1 (Button Swapping) + PHASE 2 (Instant Close)
+
+```java
+// In InCallActivity - updateUIForCallState()
+
+case STATE_RINGING:
+    btnAnswer.setVisibility(View.VISIBLE);
+    btnEndCall.setVisibility(View.VISIBLE);
+    if (bottomSection != null) bottomSection.setVisibility(View.GONE); // Hide Mute/Speaker during ringing
+    break;
+
+case STATE_ACTIVE:
+    btnAnswer.setVisibility(View.GONE);
+    btnEndCall.setVisibility(View.VISIBLE);
+    if (bottomSection != null) bottomSection.setVisibility(View.VISIBLE); // Show Mute/Speaker
+    // Audio mode sync
+    AudioManager audioManager = (AudioManager) getSystemService(AUDIO_SERVICE);
+    audioManager.setMode(AudioManager.MODE_IN_COMMUNICATION);
+    break;
+
+case STATE_DISCONNECTED:
+    btnAnswer.setVisibility(View.GONE);
+    btnEndCall.setVisibility(View.GONE);
+    if (bottomSection != null) bottomSection.setVisibility(View.GONE);
+    if (callButtonRow != null) callButtonRow.setVisibility(View.GONE);
+    // PHASE 2: Instant Close - finish immediately
+    finishAndRemoveTask();
+    break;
+```
+
+**In endCall() method:**
+```java
+private void endCall() {
+    AudioManager audioManager = (AudioManager) getSystemService(AUDIO_SERVICE);
+    if (audioManager != null) {
+        audioManager.setMode(AudioManager.MODE_NORMAL);
+        audioManager.setSpeakerphoneOn(false);
+    }
+    
+    // Use static activeCallInstance - FIRST CLICK HANGUP
+    if (ScamShieldInCallService.activeCallInstance != null) {
+        try {
+            ScamShieldInCallService.activeCallInstance.disconnect();
+        } catch (Exception e) {
+            Log.e(TAG, "Disconnect error: " + e.getMessage());
+        }
+    }
+    
+    // CRITICAL: Immediately finish - NO CONDITIONS
+    finishAndRemoveTask();
+}
+```
+
+**STEP 4: Recording**
+- Uses getExternalFilesDir("Recordings").getAbsolutePath()
+- Uses AudioSource.VOICE_COMMUNICATION
+- Try-catch around recorder.stop() to prevent crashes
+
+### Service Binding & Foreground Type Fixes
+
+### Fix 1: Service Binding (Security Bridge)
+**Problem**: InCallService (with Phone Role) and ScamMonitorService (with Mic permission) are treated as separate apps by Android
+**Solution**: Bind InCallService to ScamMonitorService in onCallAdded to create a "security bridge"
+
+```java
+// In ScamShieldInCallService.java
+private final ServiceConnection serviceConnection = new ServiceConnection() {
+    @Override
+    public void onServiceConnected(ComponentName name, IBinder service) {
+        ScamMonitorService.LocalBinder binder = (ScamMonitorService.LocalBinder) service;
+        monitorService = binder.getService();
+        isServiceBound = true;
+    }
+    
+    @Override
+    public void onServiceDisconnected(ComponentName name) {
+        monitorService = null;
+        isServiceBound = false;
+    }
+};
+
+// In startScamMonitorServiceForCall()
+if (!isServiceBound) {
+    bindService(serviceIntent, serviceConnection, Context.BIND_AUTO_CREATE);
+}
+```
+
+### Fix 2: Foreground Service Type
+**Problem**: Need all three types for audio interception during live calls
+**Solution**: Use `android:foregroundServiceType="microphone|phoneCall|specialUse"`
+
+```xml
+<!-- AndroidManifest.xml -->
+<service
+    android:name="com.shreyanshi.scamshield.services.ScamMonitorService"
+    android:foregroundServiceType="microphone|phoneCall|specialUse">
+</service>
+```
+
+### Fix 3: Audio Manager Mode
+**Problem**: Audio stream not ready when startListening() is called
+**Solution**: Set MODE_IN_COMMUNICATION and unmute microphone RIGHT BEFORE startListening
+
+```java
+// In ScamMonitorService.startSpeechRecognitionNow()
+AudioManager audioManager = (AudioManager) getSystemService(AUDIO_SERVICE);
+audioManager.setMode(AudioManager.MODE_IN_COMMUNICATION);
+audioManager.setMicrophoneMute(false);
+// THEN call googleSpeechRecognizer.start()
+```
+
+### DO (Service Binding)
+1. **DO** bind InCallService to ScamMonitorService in onCallAdded
+2. **DO** use all three foreground types: microphone|phoneCall|specialUse
+3. **DO** set MODE_IN_COMMUNICATION and unmute before every startListening call
+4. **DO** ensure LocalBinder exists in ScamMonitorService for binding
+
+### DON'T (Service Binding)
+1. **DON'T** start service without binding - treated as separate apps
+2. **DON'T** skip phoneCall in foreground type - required for call audio
+3. **DON'T** set audio mode after calling startListening - must be before
+
+## Diagnostic Features for Call Audio Debugging
+
+### Audio Level Logger (RMS dB)
+**Problem**: SpeechRecognizer shows "Listening" but no text generated
+**Solution**: Implement onRmsChanged() to log microphone levels
+
+```java
+// In GoogleSpeechRecognizer.onRmsChanged()
+private long lastRmsLogTime = 0;
+
+@Override
+public void onRmsChanged(float rmsdB) {
+    long currentTime = System.currentTimeMillis();
+    
+    // Throttle logging (500ms minimum)
+    if (currentTime - lastRmsLogTime < 500) return;
+    lastRmsLogTime = currentTime;
+    
+    // Log format: [DEBUG] Mic Volume: -XX.X dB
+    Log.d(TAG, "[DEBUG] Mic Volume: " + rmsdB + " dB");
+    
+    // Send to debug terminal
+    if (listener != null) {
+        listener.onDebugLog("[DEBUG] Mic Volume: " + rmsdB + " dB");
+    }
+    
+    // Detect muted/blocked mic
+    if (rmsdB <= 0 || rmsdB < -100) {
+        Log.w(TAG, "⚠️ MIC APPEARS MUTED/BLOCKED - RMS = " + rmsdB);
+    }
+}
+```
+
+### Raw Error Capture
+**Problem**: Need to know exact error codes during debugging
+**Solution**: Log human-readable error strings in onError()
+
+```java
+// In GoogleSpeechRecognizer.onError()
+String errorMessage = getErrorString(errorCode);
+Log.e(TAG, "❌ Speech error: [" + errorCode + "] " + errorMessage);
+
+// Human-readable mapping
+private String getErrorString(int error) {
+    switch (error) {
+        case 1: return "Audio recording error";
+        case 2: return "Client error";
+        case 3: return "Insufficient permissions";
+        case 4: return "Network error";
+        case 5: return "Network timeout";
+        case 6: return "No speech input detected";
+        case 7: return "Recognizer busy";
+        case 8: return "Server error";
+        default: return "Unknown error";
+    }
+}
+```
+
+### Experimental Audio Source Toggle (UNPROCESSED)
+**Problem**: Android noise cancellation filters out caller's voice during calls
+**Solution**: Try UNPROCESSED (9) as fallback to bypass audio processing
+
+```java
+// In setupRecognizerIntent()
+try {
+    // UNPROCESSED bypasses all audio processing for raw mic data
+    recognizerIntent.putExtra("android.speech.extra.AUDIO_SOURCE", 9);
+    Log.i(TAG, "🔊 Using UNPROCESSED audio source");
+} catch (Exception e) {
+    Log.w(TAG, "UNPROCESSED not available: " + e.getMessage());
+}
+```
+
+### Service Type Verification
+**Problem**: Verify manifest foregroundServiceType is correctly picked up
+**Solution**: Check AndroidManifest.xml has all three types
+
+```xml
+<service
+    android:name="com.shreyanshi.scamshield.services.ScamMonitorService"
+    android:foregroundServiceType="microphone|phoneCall|specialUse">
+</service>
+```
+
+### DO (Diagnostics)
+1. **DO** implement onRmsChanged() to see if mic is receiving sound
+2. **DO** log all error codes with human-readable strings
+3. **DO** try UNPROCESSED as fallback if VOICE_CALL fails
+4. **DO** verify foregroundServiceType has all three: microphone|phoneCall|specialUse
+
+### DON'T (Diagnostics)
+1. **DON'T** skip onRmsChanged() - critical for debugging mic issues
+2. **DON'T** assume mic is working just because recognizer says "listening"
+3. **DON'T** assume audio source is correct without checking RMS levels
+4. **DON'T** ignore low/zero RMS values - indicates muted/blocked mic
+
+## Manual AudioCapture - Raw Audio Buffer Approach
+
+### Problem
+SpeechRecognizer Intent-based capture is blocked during active calls. Android system blocks high-level APIs from accessing microphone while Phone app holds it.
+
+### Solution
+Use AudioRecord directly with VOICE_COMMUNICATION source to capture raw PCM audio during calls.
+
+```java
+// In ScamMonitorService.java - AudioRecord Thread
+private static final int SAMPLE_RATE = 16000;
+private static final int CHANNEL_CONFIG = AudioFormat.CHANNEL_IN_MONO;
+private static final int AUDIO_FORMAT = AudioFormat.ENCODING_PCM_16BIT;
+
+private void startAudioCaptureWithVoiceCommunication() {
+    int bufferSize = AudioRecord.getMinBufferSize(SAMPLE_RATE, CHANNEL_CONFIG, AUDIO_FORMAT);
+    
+    // Use VOICE_COMMUNICATION (9) - requires Default Dialer role
+    int audioSource = MediaRecorder.AudioSource.VOICE_COMMUNICATION;
+    
+    audioRecord = new AudioRecord(
+        audioSource,
+        SAMPLE_RATE,
+        CHANNEL_CONFIG,
+        AUDIO_FORMAT,
+        bufferSize * 2
+    );
+    
+    // Start capture in background thread
+    audioCaptureThread = new HandlerThread("AudioCaptureThread", Process.THREAD_PRIORITY_AUDIO);
+    audioCaptureThread.start();
+}
+
+private void captureAudioLoop(int bufferSize) {
+    try {
+        // WARM-UP LOOP: Wait 500ms for hardware to initialize
+        Thread.sleep(500);
+        
+        // Check if AudioRecord is still initialized
+        if (audioRecord.getState() != AudioRecord.STATE_INITIALIZED) {
+            // Re-initialize if needed
+            audioRecord = new AudioRecord(audioSource, SAMPLE_RATE, CHANNEL_CONFIG, AUDIO_FORMAT, bufferSize);
+        }
+        
+        // BUFFER FLUSH: Wait 200ms for hardware to route audio
+        audioRecord.startRecording();
+        Thread.sleep(200);
+        
+        // Now start reading
+        while (isAudioCaptureRunning) {
+            int readResult = audioRecord.read(buffer, 0, bufferSize);
+            // Process buffer...
+        }
+    } catch (InterruptedException e) {
+        // Thread interrupted
+    }
+}
+
+private void captureAudioLoop(int bufferSize) {
+    byte[] buffer = new byte[bufferSize];
+    audioRecord.startRecording();
+    
+    while (isAudioCaptureRunning) {
+        int readResult = audioRecord.read(buffer, 0, bufferSize);
+        
+        if (readResult > 0) {
+            // Calculate RMS for volume level
+            float rms = calculateRms(buffer, readResult);
+            Log.d(TAG, "🎤 RAW Audio: " + rms + " dB");
+        }
+    }
+}
+
+private float calculateRms(byte[] buffer, int readSize) {
+    double sum = 0;
+    for (int i = 0; i < readSize; i++) {
+        short sample = (short) ((buffer[i] & 0xFF) | (buffer[i + 1] << 8));
+        sum += sample * sample;
+    }
+    double rms = Math.sqrt(sum / readSize);
+    return (float) (20 * Math.log10(rms / 32768.0));
+}
+```
+
+### Audio Mode Force
+In InCallService, ensure audio mode is set BEFORE AudioRecord starts:
+
+```java
+// In ScamShieldInCallService - STATE_ACTIVE
+audioManager.setMode(AudioManager.MODE_IN_COMMUNICATION);
+```
+
+### DO (Manual AudioCapture)
+1. **DO** use VOICE_COMMUNICATION source (9) - bypasses Phone app audio lock
+2. **DO** use HandlerThread with THREAD_PRIORITY_AUDIO - prevents system from dropping buffers
+3. **DO** use larger buffer size (bufferSize * 4) - prevents index errors on modern phones
+4. **DO** wrap read() in SecurityException try-catch - catches Android 14 permission issues
+5. **DO** log RMS levels to verify mic is receiving data
+6. **DO** fallback to VOICE_RECOGNITION if VOICE_COMMUNICATION fails
+7. **DO** use 16000 Hz sample rate (standard for speech recognition)
+8. **DO** add PROPERTY_SPECIAL_USE_FGS_SUBTYPE with "scam_detection" value in manifest
+9. **DO** set telecom parameters: "recording_mode=on" and "scam_detection_active=true"
+10. **DO** use ByteBuffer with READ_BLOCKING for Android 14 stability
+11. **DO** disable AcousticEchoCanceler, NoiseSuppressor, AutomaticGainControl to allow speaker capture
+12. **DO** add MIC as final fallback - works with speakerphone echo loop trick
+13. **DO** turn OFF speakerphone when call ends
+
+### DON'T (Manual AudioCapture)
+1. **DON'T** use MIC source during calls without speaker - mic will be blocked
+2. **DON'T** use small buffer sizes - causes immediate index errors on modern high-end phones
+3. **DON'T** skip thread priority - system drops buffers on regular threads
+4. **DON'T** start AudioRecord without setting MODE_IN_COMMUNICATION first
+5. **DON'T** forget to stop AudioRecord when call ends
+6. **DON'T** assume AudioRecord will work without Default Dialer role
+7. **DON'T** skip Android 14 property - required for foreground service type
+8. **DON'T** skip telecom parameters - OEM skins like OneUI need explicit unlocking
+9. **DON'T** skip disabling AEC/NS/AGC - they filter out speaker as "noise"
+
+### InCallActivity UI Features
+- Center-aligned contact name with circular avatar/initial
+- Contact name lookup via ContactsContract.PhoneLookup
+- Mute button (toggles microphone on/off)
+- Speaker toggle (switches between earpiece and speaker)
+- Automatic finish() on STATE_DISCONNECTED
+- Timer showing call duration
+
+### Audio Routing & Microphone Sync
+- InCallService sets MODE_IN_COMMUNICATION when call becomes ACTIVE
+- ScamMonitorService checks EXTRA_CALL_ACTIVE flag before starting speech recognition
+- SpeechRecognizer only starts after audio route is properly established
+
+### Immediate Start on Call Active
+**Problem**: Audio focus gained after call ends, speech recognition starts too late
+
+**Solution**:
+1. InCallService sends ACTION_CALL_ACTIVE broadcast IMMEDIATELY when state hits STATE_ACTIVE
+2. ScamMonitorService requests AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE on receive
+3. SpeechRecognizer starts immediately after focus granted
+4. AUDIOFOCUS_LOSS_TRANSIENT handled - doesn't auto-restart (prevents spam during connecting)
+
+```java
+// InCallService - send immediate broadcast
+private void sendImmediateStartBroadcast(String phoneNumber) {
+    Intent intent = new Intent(ACTION_CALL_ACTIVE);
+    intent.putExtra(EXTRA_PHONE_NUMBER, phoneNumber);
+    sendBroadcast(intent);
+}
+
+// In ScamMonitorService - request focus with AudioFocusRequest.Builder (Modern API)
+AudioAttributes audioAttributes = new AudioAttributes.Builder()
+    .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
+    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+    .build();
+
+AudioFocusRequest focusRequest = new AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE)
+    .setAudioAttributes(audioAttributes)
+    .setOnAudioFocusChangeListener(audioFocusListener)
+    .setAcceptsDelayedFocusGain(true)  // Allow delayed focus for transitions
+    .build();
+
+int result = audioManager.requestAudioFocus(focusRequest);
+```
+
+### Audio Focus Request with Proper AudioAttributes
+**Problem**: Audio focus denied repeatedly during call - focus only granted after call ends
+
+**Root Cause**: Using deprecated `requestAudioFocus(listener, stream, focusChange)` without AudioAttributes
+
+**Solution**:
+1. Use `AudioAttributes.Builder()` with `USAGE_VOICE_COMMUNICATION` and `CONTENT_TYPE_SPEECH`
+2. Use `AudioFocusRequest.Builder(AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE)`
+3. Set `setAcceptsDelayedFocusGain(true)` for transitions
+4. Use exactly 500ms retry delay when focus is denied
+
+```java
+// Full implementation in ScamMonitorService
+private void requestAudioFocusAndStartListening(String phoneNumber) {
+    AudioManager audioManager = (AudioManager) getSystemService(AUDIO_SERVICE);
+    
+    AudioAttributes audioAttributes = new AudioAttributes.Builder()
+        .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
+        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+        .build();
+    
+    AudioFocusRequest focusRequest = new AudioFocusRequest.Builder(
+        AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE)
+        .setAudioAttributes(audioAttributes)
+        .setOnAudioFocusChangeListener(audioFocusListener)
+        .setAcceptsDelayedFocusGain(true)
+        .build();
+    
+    int result = audioManager.requestAudioFocus(focusRequest);
+    
+    if (result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
+        startSpeechRecognitionNow();
+    } else {
+        // Don't retry here - let audioFocusListener handle it
+        // The listener will retry when system grants focus
+    }
+}
+```
+
+**Important**: The audio focus listener must handle AUDIOFOCUS_GAIN callback to start speech recognition when focus is later granted:
+```java
+case AudioManager.AUDIOFOCUS_GAIN:
+    audioFocusHeld = true;
+    if (isCallActive && googleSpeechRecognizer == null) {
+        startSpeechRecognitionNow();  // Start when focus granted later
+    }
+    break;
+```
+
+### InCallService to ScamMonitorService Communication (LocalBroadcastManager)
+**Problem**: Using system `sendBroadcast()` for internal app communication can be filtered/blocked by Android
+
+**Solution**: Use `LocalBroadcastManager` for reliable internal communication between app components
+
+**Sender (InCallService)**:
+```java
+// Import
+import androidx.localbroadcastmanager.content.LocalBroadcastManager;
+
+// Send broadcast
+Intent intent = new Intent(ACTION_CALL_ACTIVE);
+intent.putExtra(EXTRA_PHONE_NUMBER, phoneNumber);
+intent.putExtra(ScamMonitorService.EXTRA_CALL_ACTIVE, true);
+LocalBroadcastManager.getInstance(this).sendBroadcast(intent);
+```
+
+**Receiver (ScamMonitorService)**:
+```java
+// Register in onCreate
+IntentFilter filter = new IntentFilter();
+filter.addAction(ACTION_CALL_ACTIVE);
+filter.addAction(ACTION_STOP);
+LocalBroadcastManager.getInstance(this).registerReceiver(callActiveReceiver, filter);
+
+// Unregister in onDestroy
+LocalBroadcastManager.getInstance(this).unregisterReceiver(callActiveReceiver);
+```
+
+**Manifest**: NO declaration needed - dynamic registration in `onCreate()` is sufficient for LocalBroadcastManager
+
+### Android 14+ BroadcastReceiver Security Fix
+**Problem**: java.lang.SecurityException: One of RECEIVER_EXPORTED or RECEIVER_EXPORTED should be specified
+
+**Solution**:
+1. For registerReceiver() calls in code, use:
+```java
+if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+    registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED);
+} else {
+    registerReceiver(receiver, filter);
+}
+```
+2. For receivers in AndroidManifest, use:
+```xml
+<receiver android:exported="true" ...>  <!-- for system broadcasts -->
+<!-- or -->
+<receiver android:exported="false" ...> <!-- for internal app use -->
+```
+
+### InCallService Call Visibility Fix
+**Problem**: User navigates away from call screen and cannot find the call again
+
+**Solution**:
+1. Show persistent notification during STATE_ACTIVE that returns to InCallActivity when tapped
+2. Add foregroundServiceType="phoneCall" to InCallService in AndroidManifest
+3. Use AudioManager.STREAM_VOICE_CALL for audio focus (allowed for Default Dialer)
+
+```xml
+<!-- AndroidManifest.xml -->
+<service
+    android:name="...ScamShieldInCallService"
+    android:foregroundServiceType="phoneCall">
+```
+
+```java
+// ScamShieldInCallService - show notification
+private void showCallNotification(String phoneNumber, boolean isIncoming) {
+    Intent intent = InCallActivity.createIntent(this, phoneNumber, STATE_ACTIVE, isIncoming);
+    PendingIntent pendingIntent = PendingIntent.getActivity(this, 0, intent, ...);
+    
+    Notification notification = new NotificationCompat.Builder(this, CHANNEL_ID)
+        .setContentTitle("ScamShield Call")
+        .setContentText(isIncoming ? "Incoming: " + number : "Outgoing: " + number)
+        .setSmallIcon(R.drawable.ic_notification)
+        .setOngoing(true)
+        .setContentIntent(pendingIntent)
+        .build();
+    
+    startForeground(NOTIFICATION_ID, notification);
+}
+```
+
+### Audio Source for Call Detection
+**Problem**: Standard MIC is blocked during active phone calls
+
+**Solution**: Use VOICE_CALL audio source (falls back to VOICE_RECOGNITION for better noise filtering)
+```java
+// In GoogleSpeechRecognizer.setupRecognizerIntent()
+// On some devices, VOICE_COMMUNICATION is blocked, but as Default Dialer,
+// VOICE_CALL allows hearing both sides of the conversation
+// Falls back to VOICE_RECOGNITION (better at filtering background noise), then to VOICE_COMMUNICATION
+try {
+    recognizerIntent.putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE, 
+        android.media.MediaRecorder.AudioSource.VOICE_CALL);
+} catch (Exception e) {
+    // Fallback to VOICE_RECOGNITION - better at filtering background noise
+    try {
+        recognizerIntent.putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE, 
+            android.media.MediaRecorder.AudioSource.VOICE_RECOGNITION);
+    } catch (Exception e2) {
+        // Fallback to VOICE_COMMUNICATION
+        recognizerIntent.putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE, 
+            android.media.MediaRecorder.AudioSource.VOICE_COMMUNICATION);
+    }
+}
+
+// Enable partial results for real-time feedback
+recognizerIntent.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true);
+
+// Force LANGUAGE_MODEL_FREE_FORM for natural speech
+recognizerIntent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, 
+    RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
+
+// Set language to en-IN for Indian English accents
+recognizerIntent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, "en-IN");
+```
+
+### Hardware Sync Delay
+**Problem**: Audio session not ready immediately when call becomes ACTIVE
+
+**Solution**: Add 1-second delay after receiving ACTIVE signal
+```java
+// In ScamMonitorService - BroadcastReceiver
+if (callActive) {
+    isCallActive = true;
+    
+    // 1-second delay to give hardware time to switch from 'Ringing' to 'In-Call' mode
+    final String delayedPhoneNumber = phoneNumber;
+    final int delayedSessionId = audioSessionId;
+    
+    handler.postDelayed(() -> {
+        startListeningForScamsWithSession(delayedPhoneNumber, delayedSessionId);
+    }, 1000);  // 1 second delay for hardware sync
+}
+```
+
+### InCallService Early Audio Focus
+**Problem**: Audio focus denied because not claimed early enough
+
+**Solution**: Request audio focus in onCallAdded, before call becomes active
+```java
+// In ScamShieldInCallService - onCallAdded()
+if (audioManager != null) {
+    audioManager.setMode(AudioManager.MODE_IN_COMMUNICATION);
+    Log.i(TAG, "🔊 Audio mode set to MODE_IN_COMMUNICATION in onCallAdded");
+}
+```
+
+### Mute/Unmute Hack (InCallService)
+**Problem**: Audio pipeline locked by system, secondary listeners can't access stream
+
+**Solution**: Programmatically Mute then Unmute to "wake up" audio pipeline
+```java
+// In ScamShieldInCallService - STATE_ACTIVE
+handler.postDelayed(() -> {
+    audioManager.setMicrophoneMute(true);
+    Log.d(TAG, "🔇 Muted microphone");
+    
+    handler.postDelayed(() -> {
+        audioManager.setMicrophoneMute(false);
+        Log.d(TAG, "🔊 Unmuted - audio pipeline should be ready");
+    }, 100);
+}, 500); // Wait 500ms after call becomes active
+```
+
+### Service Binding with BIND_IMPORTANT (MainActivity)
+**Problem**: ScamMonitorService doesn't get highest CPU/Audio priority
+
+**Solution**: Bind to service with BIND_IMPORTANT flag
+```java
+// In MainActivity.startScamMonitorService()
+if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+    bindService(serviceIntent, serviceConnection, Context.BIND_IMPORTANT);
+    Log.d(TAG, "🔗 Binding with BIND_IMPORTANT for highest priority");
+}
+```
+
+### Direct Audio Session Sharing (No-Focus Start)
+**Problem**: Audio focus always denied during calls - even with retries
+
+**Solution**: Skip audio focus request entirely when we have valid session ID from InCallService
+```java
+// In ScamMonitorService - startListeningForScamsWithSession()
+public void startListeningForScamsWithSession(String phoneNumber, int audioSessionId) {
+    // CRITICAL: If we have a valid session ID, SKIP audio focus request
+    if (audioSessionId > 0) {
+        Log.i(TAG, "🎵 Using DIRECT audio session ID - skipping audio focus request");
+        sendDebugLogBroadcast("🎵 DIRECT START with sessionId=" + audioSessionId);
+        
+        // Go directly to speech recognition using shared session
+        startSpeechRecognitionNow(audioSessionId);
+        return;
+    }
+    
+    // Fallback: normal audio focus request
+    requestAudioFocusAndStartListeningWithSession(phoneNumber, audioSessionId);
+}
+```
+
+### InCallService Audio Route Toggle
+**Problem**: System holds microphone lock during active calls
+
+**Solution**: Toggle audio route to force Android to refresh audio policy
+```java
+// In ScamShieldInCallService - STATE_ACTIVE
+audioManager.setMode(AudioManager.MODE_IN_COMMUNICATION);
+
+// Toggle to SPEAKER then back to force audio policy refresh
+audioManager.setSpeakerphoneOn(true);   // Force to speaker
+audioManager.setSpeakerphoneOn(false);  // Back to earpiece
+Log.d(TAG, "🔊 Audio route toggled to force policy refresh");
+```
+
+### Speaker Toggle Trick (InCallService)
+**Problem**: Audio focus denied repeatedly - system doesn't recognize ScamShield as secondary listener
+
+**Solution**: Toggle speakerphone on/off to force Audio Policy Manager to refresh
+```java
+// In ScamShieldInCallService - on STATE_ACTIVE
+if (audioManager != null) {
+    audioManager.setMode(AudioManager.MODE_IN_COMMUNICATION);
+    audioManager.setSpeakerphoneOn(false); // Default to earpiece
+    
+    // TRICK: Toggle speakerphone to force Audio Policy Manager to refresh
+    audioManager.setSpeakerphoneOn(true);
+    audioManager.setSpeakerphoneOn(false);
+    Log.i(TAG, "🔊 Speaker toggle trick applied to refresh audio policy");
+}
+```
+
+### Required Permissions for Audio
+**Problem**: Audio focus requests fail without proper permissions
+
+**Solution**: Add MODIFY_AUDIO_SETTINGS to AndroidManifest.xml
+```xml
+<uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+```
+
+### Audio Session Sharing Between InCallService and ScamMonitorService
+**Problem**: Audio focus denied repeatedly - ScamShield treated as separate app, not secondary listener
+
+**Solution**: Share audio session ID between InCallService and ScamMonitorService
+
+**InCallService - Generate and pass session ID**:
+```java
+// In onStateChanged - STATE_ACTIVE
+int audioSessionId = audioManager.generateAudioSessionId();
+sendImmediateStartBroadcastWithSession(handle, audioSessionId);
+
+// New method
+private void sendImmediateStartBroadcastWithSession(String phoneNumber, int audioSessionId) {
+    Intent intent = new Intent(ACTION_CALL_ACTIVE);
+    intent.putExtra(EXTRA_PHONE_NUMBER, phoneNumber);
+    intent.putExtra(ScamMonitorService.EXTRA_CALL_ACTIVE, true);
+    intent.putExtra("audio_session_id", audioSessionId);
+    LocalBroadcastManager.getInstance(this).sendBroadcast(intent);
+}
+```
+
+**ScamMonitorService - Abandon focus before requesting**:
+```java
+public void startListeningForScamsWithSession(String phoneNumber, int audioSessionId) {
+    // ABANDON FOCUS BEFORE REQUESTING - Reset to let system know priority changed
+    abandonAudioFocus();
+    
+    requestAudioFocusAndStartListeningWithSession(currentNumber, audioSessionId);
+    speechRecognitionStarted = true;
+}
+
+private void abandonAudioFocus() {
+    if (audioFocusHeld) {
+        audioManager.abandonAudioFocus(audioFocusListener);
+        audioFocusHeld = false;
+    }
+}
+```
+
+**GoogleSpeechRecognizer - Accept audio session ID**:
+```java
+public GoogleSpeechRecognizer(Context context, SpeechListener listener, int audioSessionId) {
+    this.context = context;
+    this.listener = listener;
+    this.audioSessionId = audioSessionId;
+    initializeSpeechRecognizer();
+}
+```
 
 ## Common Issues & Solutions
 
@@ -3849,3 +4986,749 @@ for folder, size in [('mipmap-mdpi',48), ('mipmap-hdpi',72), ('mipmap-xhdpi',96)
 ## Bug Fixes
 - Fixed SQLiteException in HomeFragment search (using correct column names from ContactsContract)
 - Fixed ClassCastException in ContactsAdapter (ImageView vs ImageButton type mismatch)
+
+---
+
+## Call-Time Speech Detection Fixes (Phone Call Microphone Access)
+
+### Problem
+ScamShield service stays alive during a phone call, but it doesn't "hear" anything. The speech recognition gets silence because the Phone app is using the microphone, blocking other apps from accessing it.
+
+### Root Cause
+The default audio source for SpeechRecognizer conflicts with the Phone app during active calls. When another app holds the microphone, SpeechRecognizer receives silence or ERROR_RECOGNIZER_BUSY (Error 8).
+
+### Solution Overview
+Three key fixes implemented in GoogleSpeechRecognizer.java:
+1. **Audio Source Change** - Use VOICE_COMMUNICATION for call-time detection
+2. **Continuous Listening Loop** - Restart immediately after onEndOfSpeech()
+3. **Microphone Busy Retry** - 2-second delay for ERROR_RECOGNIZER_BUSY (Error 8)
+4. **Volume Log** - Real-time mic level display in debug terminal
+
+### Implementation Details
+
+#### Fix 1: Change Audio Source (Already Implemented)
+```java
+// In setupRecognizerIntent() - uses VOICE_COMMUNICATION for call-time detection
+recognizerIntent.putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE, 
+    android.media.MediaRecorder.AudioSource.VOICE_COMMUNICATION);
+```
+- VOICE_COMMUNICATION is designed to work during active VoIP or telephony calls
+- Allows parallel microphone access with the Phone app
+- Fallback: VOICE_RECOGNITION can also be tried if VOICE_COMMUNICATION fails
+
+#### Fix 2: Continuous Listening Loop (Already Implemented)
+```java
+// In onEndOfSpeech() - immediately restart listening after silence
+@Override
+public void onEndOfSpeech() {
+    Log.d(TAG, "🔇 End of speech detected, restarting listening immediately...");
+    
+    if (listener != null) {
+        try {
+            listener.onDebugLog("🔇 Silence detected, resuming listening...");
+        } catch (Exception e) {
+            Log.d(TAG, "Debug log callback failed: " + e.getMessage());
+        }
+    }
+    
+    // Restart listening immediately (200ms delay) to capture next phrase
+    if (autoRestartEnabled && speechRecognizer != null) {
+        handler.postDelayed(this::start, 200);
+    }
+}
+```
+- Without this, gaps in conversation would pause monitoring
+- During phone calls, there are many pauses (user listening, other person talking)
+- Must restart immediately to not miss scam keywords in the next phrase
+
+#### Fix 3: Handle Microphone Busy - ERROR_RECOGNIZER_BUSY (Error 8) (Already Implemented)
+```java
+// In onError() - separate handling for ERROR_RECOGNIZER_BUSY (Error 8)
+if (errorCode == SpeechRecognizer.ERROR_NO_MATCH 
+        || errorCode == SpeechRecognizer.ERROR_RECOGNIZER_BUSY) {
+    if (autoRestartEnabled) {
+        // ERROR_RECOGNIZER_BUSY: Mic busy during call - use 2-second retry
+        // ERROR_NO_MATCH: Normal silence - use 500ms retry
+        long retryDelay = (errorCode == SpeechRecognizer.ERROR_RECOGNIZER_BUSY) ? 2000 : 500;
+        String retryMsg = (errorCode == SpeechRecognizer.ERROR_RECOGNIZER_BUSY) 
+            ? "🔄 Mic busy (call in progress), retrying in 2 seconds..." 
+            : "🔄 Beep heard (NO_MATCH), restarting in 500ms...";
+        
+        Log.i(TAG, retryMsg);
+        if (listener != null) {
+            listener.onDebugLog(retryMsg);
+        }
+        handler.postDelayed(this::autoRestartListening, retryDelay);
+    }
+    return;
+}
+```
+- ERROR_RECOGNIZER_BUSY (Error 8): Mic is busy during call, retry after 2 seconds
+- ERROR_NO_MATCH (Error 7): Normal silence, retry after 500ms
+- Also handle ERROR_INSUFFICIENT_PERMISSIONS (Error 9) with 2-second retry
+
+#### Fix 4: Volume Log - Real-time Mic Level (Already Implemented)
+```java
+// In onRmsChanged() - log microphone level for debugging
+@Override
+public void onRmsChanged(float rmsdB) {
+    long currentTime = System.currentTimeMillis();
+    
+    // Throttle logging to prevent spam (200ms minimum between logs)
+    if (currentTime - lastRmsLogTime < RMS_LOG_THROTTLE_MS) {
+        return;
+    }
+    
+    // Only log if RMS value changed significantly (>2dB difference)
+    if (Math.abs(rmsdB - lastRmsValue) < 2.0f) {
+        return;
+    }
+    
+    lastRmsLogTime = currentTime;
+    lastRmsValue = rmsdB;
+    
+    // Format: "🎤 Mic Level: -10.5dB"
+    String micMessage = String.format("🎤 Mic Level: %.1fdB", rmsdB);
+    
+    // Send to debug terminal
+    if (listener != null) {
+        try {
+            listener.onDebugLog(micMessage);
+        } catch (Exception e) {
+            Log.d(TAG, "Debug log callback failed: " + e.getMessage());
+        }
+    }
+    
+    Log.d(TAG, micMessage);
+}
+```
+- Shows "🎤 Mic Level: -10.5dB" in debug terminal
+- If level stays at 0 or very negative (-100), mic is muted by system
+- Helps diagnose why app can't hear during calls
+- Throttled to prevent log spam (200ms between updates)
+
+### Debug Terminal Expected Output During Call
+```
+[14:25:10] 🎤 Mic Level: -12.3dB
+[14:25:11] 🎤 Mic Level: -8.5dB
+[14:25:12] 🎤 Mic Level: -3.2dB
+[14:25:13] 🎤 Mic Level: 0.0dB  <- User is speaking
+[14:25:14] 🎤 Mic Level: -2.1dB
+[14:25:15] 🔇 Silence detected, resuming listening...
+[14:25:16] 🎤 Mic Level: -100.0dB  <- Mic muted by system (PROBLEM!)
+```
+
+### DO's & DON'Ts for Call-Time Detection
+
+**DO:**
+1. Use VOICE_COMMUNICATION audio source for call-time detection
+2. Implement immediate restart in onEndOfSpeech() for continuous monitoring
+3. Use 2-second retry for ERROR_RECOGNIZER_BUSY (Error 8)
+4. Log microphone levels in onRmsChanged() for debugging
+5. Check if RMS stays at -100 (mic muted by system)
+6. Use handler.postDelayed() for all retry delays (never Thread.sleep)
+7. Log "🔄 Mic busy (call in progress)" message for user visibility
+8. Test on real phone call (not just app open)
+
+**DON'T:**
+1. DON'T use default audio source (will be blocked by Phone app)
+2. DON'T stop listening after onEndOfSpeech() (gaps miss scam keywords)
+3. DON'T use same retry delay for all errors (2s for busy, 500ms for no match)
+4. DON'T skip onRmsChanged() logging (critical for debugging mic issues)
+5. DON'T assume mic is working if RMS shows -100 (system muted it)
+6. DON'T test with app in foreground only (must test during real call)
+7. DON'T use Thread.sleep() for delays (blocks main thread)
+8. DON'T ignore ERROR_RECOGNIZER_BUSY (needs special handling)
+
+### Testing Checklist for Call-Time Detection
+
+- [ ] Install app on Android device
+- [ ] Enable debug log in Settings
+- [ ] Make a real phone call (not VoIP)
+- [ ] Verify debug terminal shows "🎤 Mic Level" values
+- [ ] Speak during call and verify levels change (e.g., -12dB to -3dB)
+- [ ] Verify levels return to negative when you stop speaking
+- [ ] Check if levels show -100dB (mic muted by system)
+- [ ] End call and verify listening continues
+- [ ] Trigger ERROR_RECOGNIZER_BUSY during call
+- [ ] Verify "🔄 Mic busy (call in progress), retrying in 2 seconds..." message
+- [ ] Verify retry happens after 2 seconds
+- [ ] Speak scam keyword during call
+- [ ] Verify app detects keyword and triggers alert
+
+### Troubleshooting Call-Time Detection
+
+**Problem:** Debug terminal shows "🎤 Mic Level: -100dB" constantly
+- **Root Cause:** Mic is muted by the system during the call
+- **Check 1:** Is this a real phone call (not VoIP)?
+- **Check 2:** Does Phone app have mic permission?
+- **Check 3:** Is there a call recording restriction on this device?
+- **Solution:** Cannot be fixed in app - system is blocking mic access
+
+**Problem:** Debug terminal shows ERROR_RECOGNIZER_BUSY every few seconds
+- **Root Cause:** Phone app is continuously holding the mic
+- **Check 1:** Is the call still active?
+- **Check 2:** Is another app using the mic?
+- **Solution:** Normal during calls - 2-second retry should eventually work
+
+**Problem:** No speech recognition during call, but works when not in call
+- **Root Cause:** Audio source conflict with Phone app
+- **Check 1:** Verify VOICE_COMMUNICATION is set in intent
+- **Check 2:** Check if ERROR_RECOGNIZER_BUSY occurs
+- **Solution:** Ensure 2-second retry is implemented for busy errors
+
+---
+
+## Android 14 SecurityException Fix (Foreground Service Microphone)
+
+### Problem
+Android 14 (API 34) throws SecurityException regarding "eligible state/exemptions" for Foreground Service Microphone. The log shows the service starting twice in one second - causing the service to destroy itself.
+
+### Root Causes
+1. **Double-start issue**: Service starts twice in rapid succession (within 1 second)
+2. **Missing service type flag**: startForeground() called without FOREGROUND_SERVICE_TYPE_MICROPHONE on Android 14
+3. **Wrong API level check**: Using Build.VERSION_CODES.Q instead of Build.VERSION_CODES.UPSIDE_DOWN_CAKE
+4. **startForeground not first**: Waiting for RECORD_AUDIO check or channel setup before startForeground
+
+### Implementation Details
+
+#### Fix 1: "Stop-Before-Start" Safety Check - FIRST LINE IN onStartCommand()
+```java
+// In ScamMonitorService.onStartCommand()
+@Override
+public int onStartCommand(Intent intent, int flags, int startId) {
+    long startTime = System.currentTimeMillis();
+    
+    // CRITICAL FIX #1: Move startForeground to VERY FIRST LINE
+    // Android 14 requires startForeground() to be called within 5 seconds
+    // BEFORE any other operations including RECORD_AUDIO check
+    
+    // CRITICAL FIX #2: "Stop-Before-Start" - Prevent double-start self-destruction
+    if (isServiceRunning) {
+        Log.w(TAG, "⚠️ Service already running, returning START_STICKY");
+        sendDebugLogBroadcast("⚠️ Service already running, skipping duplicate start");
+        return START_STICKY;
+    }
+    
+    // Set running flag IMMEDIATELY before calling startForeground
+    isServiceRunning = true;
+    sendDebugLogBroadcast("🔴 Starting foreground service NOW");
+    
+    // CRITICAL FIX #3: Call startForeground IMMEDIATELY as first operation
+    startForegroundWithNotification();
+    
+    long elapsed = System.currentTimeMillis() - startTime;
+    Log.i(TAG, "⏱️ startForeground completed in " + elapsed + "ms (must be <5000ms)");
+    
+    // NOW check SharedPreferences AFTER foreground is running
+}
+```
+
+#### Fix 2: Correct API Level for Service Type
+```java
+// In ScamMonitorService.startForegroundWithNotification()
+// CRITICAL FIX: Use UPSIDE_DOWN_CAKE (API 33) as per Android 14 requirement
+if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+    startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE);
+} else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+    startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE);
+} else {
+    startForeground(NOTIFICATION_ID, notification);
+}
+```
+
+#### Fix 3: Manifest Verification
+```xml
+<!-- AndroidManifest.xml - Ensure these are at the top of manifest -->
+<uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+
+<!-- Service declaration with microphone type -->
+<service
+    android:name="com.shreyanshi.scamshield.services.ScamMonitorService"
+    android:foregroundServiceType="microphone|specialUse">
+    <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+        android:value="Real-time scam detection and alerting during calls" />
+</service>
+```
+
+### DO's & DON'Ts for Android 14 Foreground Service
+
+**DO:**
+1. Use Build.VERSION_CODES.UPSIDE_DOWN_CAKE (33) for Android 14 service type check
+2. Add isServiceRunning check at start of onStartCommand() to prevent double-start
+3. Start service from MainActivity (not Fragment or BroadcastReceiver)
+4. Call startForeground() within 5 seconds of onStartCommand()
+5. Include ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE flag on Android 14+
+6. Call startForeground as FIRST LINE in onStartCommand() - before any checks
+
+**DON'T:**
+1. DON'T use Build.VERSION_CODES.Q (29) for microphone service type (use UPSIDE_DOWN_CAKE = 33)
+2. DON'T start service from Fragment (causes SecurityException on Android 14)
+3. DON'T start service from BroadcastReceiver (eligible state not met)
+4. DON'T skip isServiceRunning check (causes double-start)
+5. DON'T use deprecated startForeground() without type flag on Android 14
+6. DON'T wait for RECORD_AUDIO or channel setup before calling startForeground
+
+---
+
+## Final Activation: Mic Wakeup & Logic Link
+
+### Problem
+ScamShield app works perfectly when the app is open, but the microphone goes silent during a real phone call. Need to bypass the Android Call-Privacy block.
+
+### Root Causes
+1. **Audio Source**: MIC is blocked during calls - need VOICE_COMMUNICATION
+2. **Audio Focus**: Need to request AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK when has ROLE_DIALER
+3. **Call Settling Time**: ERROR_RECOGNIZER_BUSY (Error 8) needs 2-second retry
+
+### Implementation Details
+
+#### Fix 1: Switch to Communication Mode
+```java
+// In GoogleSpeechRecognizer.setupRecognizerIntent()
+// Use VOICE_COMMUNICATION for real phone call detection
+// Standard MIC is blocked during calls. VOICE_COMMUNICATION is designed
+// to "share" audio during a telephony session.
+recognizerIntent.putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE, 
+    android.media.MediaRecorder.AudioSource.VOICE_COMMUNICATION);
+```
+
+#### Fix 2: Request "Role Manager" Priority
+```java
+// In MainActivity.onActivityResult() when ROLE_DIALER is granted
+private void requestAudioFocusForCallDetection() {
+    AudioManager audioManager = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
+    int result = audioManager.requestAudioFocus(
+        listener,
+        AudioManager.STREAM_VOICE_CALL,
+        AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK
+    );
+    // Result: AUDIOFOCUS_REQUEST_GRANTED means success
+}
+```
+
+#### Fix 3: Handle "Audio Busy" Error (Error 8)
+```java
+// In GoogleSpeechRecognizer.onError()
+// If ERROR_RECOGNIZER_BUSY (Error 8), wait 2 seconds before retry
+// This gives the Phone app time to "settle" before ScamShield asks for audio stream
+if (errorCode == SpeechRecognizer.ERROR_RECOGNIZER_BUSY) {
+    long retryDelay = 2000;  // 2 seconds
+    handler.postDelayed(this::autoRestartListening, retryDelay);
+}
+```
+
+### Expected Debug Terminal Output During Call
+```
+[14:25:10] 🎤 Mic Level: -12.3dB
+[14:25:12] 🔄 Mic busy (call in progress), retrying in 2 seconds...
+[14:25:14] 🎤 Mic Signal Detected...
+[14:25:16] 📢 Partial: verify your OTP
+[14:25:18] ✅ Final: verify your OTP
+[14:25:18] 🚨 SCAM KEYWORD DETECTED: otp
+```
+
+### DO's & DON'Ts for Call Detection
+
+**DO:**
+1. Use VOICE_COMMUNICATION audio source for actual call detection
+2. Request AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK when ROLE_DIALER granted
+3. Use 2-second retry for ERROR_RECOGNIZER_BUSY (Error 8)
+4. Test during real phone call (not just app open)
+
+**DON'T:**
+1. DON'T use MIC during actual calls (will be blocked by Phone app)
+2. DON'T skip audio focus request (Phone app will mute mic)
+3. DON'T retry immediately on Error 8 (call needs time to settle)
+
+---
+
+## Hard-Lock: Prevent Service Self-Destruct
+
+### Problem
+ScamMonitorService starts and immediately calls onDestroy() (self-destructing) at the same timestamp. Need to force service to stay alive.
+
+### Root Causes
+1. **Auto-Stop**: SharedPreferences check triggers stopSelf() prematurely
+2. **Unknown Killer**: Need to identify if Android System or bug is destroying service
+3. **Audio Bridge**: Need to ensure onPartialResults sends text to service for analysis
+
+### Implementation Details
+
+#### Fix 1: Disable Auto-Stop
+```java
+// In ScamMonitorService.onStartCommand()
+// FIX: Disable auto-stop for debugging - force service to stay alive
+// Commented out to verify mic works without being killed
+/*
+if (!scamAlertsEnabled) {
+    stopSelf();
+    return START_NOT_STICKY;
+}
+*/
+```
+
+#### Fix 2: Log the "Killer"
+```java
+// In ScamMonitorService.onDestroy()
+String destroyer = (googleSpeechRecognizer == null) ? "System/Low Memory" : "User/Code Action";
+Log.i(TAG, "🛑 DESTROY TRIGGERED BY: " + destroyer);
+sendDebugLogBroadcast("🛑 DESTROY TRIGGERED BY: " + destroyer);
+```
+
+#### Fix 3: Keyword "Test" Toast
+```java
+// In ScamMonitorService.onSpeechRecognized()
+// Show toast for testing - confirms analysis logic is connected
+android.widget.Toast.makeText(this, "Checking: " + text, android.widget.Toast.LENGTH_SHORT).show();
+```
+
+### Expected Behavior
+- Terminal shows: "✅ Speech Recognizer initialized"
+- Terminal NEVER shows: "🛑 Service destroying" until user closes app
+- Toast shows: "Checking: [text]" for every recognized word
+
+### DO's & DON'Ts for Service Hard-Lock
+
+**DO:**
+1. Comment out stopSelf() calls during debugging
+2. Log destroy trigger source to identify what's killing service
+3. Add test Toast to confirm analysis logic is linked
+
+**DON'T:**
+1. DON'T leave stopSelf() active during testing (kills service prematurely)
+2. DON'T skip logging in onDestroy() (can't identify killer)
+
+---
+
+## Virtual Mic: Use InCallService for Call Audio Access
+
+### Problem
+App is waiting for Phone app to release the mic. Need to use InCallService to access the audio stream during active calls.
+
+### Root Cause
+Standard microphone sources are blocked during active phone calls. Need to use Telecom framework's InCallService to get audio stream access.
+
+### Implementation Details
+
+#### Fix 1: Start Service from InCallService
+```java
+// In ScamShieldInCallService.onCallAdded()
+// When call is detected, start ScamMonitorService for scam detection
+@Override
+public void onCallAdded(Call call) {
+    super.onCallAdded(call);
+    // Start monitoring service when call is detected
+    startScamMonitorServiceForCall();
+}
+
+private void startScamMonitorServiceForCall() {
+    Intent serviceIntent = new Intent(this, ScamMonitorService.class);
+    serviceIntent.putExtra("from_call", true);
+    
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        startForegroundService(serviceIntent);
+    } else {
+        startService(serviceIntent);
+    }
+}
+```
+
+#### Fix 2: Use VOICE_RECOGNITION Audio Source
+```java
+// In GoogleSpeechRecognizer.setupRecognizerIntent()
+// Use VOICE_RECOGNITION for broader compatibility
+recognizerIntent.putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE, 
+    android.media.MediaRecorder.AudioSource.VOICE_RECOGNITION);
+```
+
+### DO's & DON'Ts for Virtual Mic
+
+**DO:**
+1. Start ScamMonitorService from InCallService when call is detected
+2. Use VOICE_RECOGNITION audio source for call-time detection
+3. Pass "from_call" extra to service for context
+
+**DON'T:**
+1. DON'T rely on CallReceiver alone for call detection (InCallService is more reliable)
+2. DON'T use MIC source during calls (will be blocked)
+
+---
+
+## Bypass Dialer Role (Moto/Redmi Restricted Settings)
+
+### Problem
+Motorola phone is blocking the "Default Dialer" role with Restricted Settings. Need to bypass and use standard Broadcast monitoring instead.
+
+### Root Causes
+1. **Restricted Settings**: Moto/Redmi devices have additional restrictions on Dialer role
+2. **System Permissions**: VOICE_COMMUNICATION requires system-level permissions
+
+### Implementation Details
+
+#### Fix 1: Disable Dialer Role Request
+```java
+// In MainActivity.requestDefaultDialerRole()
+// FIX: Log warning that Dialer Role is bypassed on restricted devices
+Log.i(TAG, "⚠️ Dialer Role bypassed - using standard Broadcast monitoring");
+appendLog("⚠️ Dialer Role bypassed - using standard Broadcast monitoring");
+// Old role request code commented out - CallReceiver handles detection
+```
+
+#### Fix 2: CallReceiver Already Handles Standard Monitoring
+```java
+// In CallReceiver.java - already implemented
+// Uses PHONE_STATE broadcast to detect calls
+// Starts ScamMonitorService when RINGING or OFFHOOK state detected
+```
+
+#### Fix 3: Change to MIC Audio Source
+```java
+// In GoogleSpeechRecognizer.setupRecognizerIntent()
+// Use MIC for standard monitoring - doesn't need System Phone permissions
+recognizerIntent.putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE, 
+    android.media.MediaRecorder.AudioSource.MIC);
+```
+
+### Expected Behavior
+- App starts listening via CallReceiver when PHONE_STATE changes
+- No Dialer role required
+- Uses standard RECORD_AUDIO permission
+- During active calls, MIC might be blocked (expected behavior)
+
+### DO's & DON'Ts
+
+**DO:**
+1. Log "⚠️ Dialer Role bypassed - using standard Broadcast monitoring" 
+2. Use CallReceiver for call detection (works without Dialer role)
+3. Use MIC audio source (doesn't need special permissions)
+4. Add START PROTECTION button for manual foreground service start
+5. Start service from button click (satisfies Android 14 eligible state)
+
+**DON'T:**
+1. DON'T request Dialer role on restricted devices (will fail)
+2. DON'T use VOICE_COMMUNICATION without Dialer role
+3. DON'T start service from background (will fail on Android 14)
+
+### Additional Implementation: START PROTECTION Button
+
+#### Foreground Start (MainActivity)
+```java
+// In MainActivity.onCreate()
+private void addStartProtectionButton() {
+    // Create START PROTECTION button
+    android.widget.Button startBtn = new android.widget.Button(this);
+    startBtn.setText("🛡️ START PROTECTION");
+    startBtn.setBackgroundColor(0xFF4CAF50);  // Green
+    
+    startBtn.setOnClickListener(v -> {
+        Log.i(TAG, "🛡️ START PROTECTION button clicked");
+        appendLog("🛡️ START PROTECTION button clicked");
+        
+        // Start the service while app is in foreground
+        startScamMonitorService();
+        
+        // Show bypass message
+        appendLog("🛡️ Security Bypass Active: Listening via Standard Mic");
+    });
+}
+```
+
+### Expected Behavior After Changes
+- User opens app → sees green "🛡️ START PROTECTION" button at top
+- User clicks button → service starts in foreground
+- Terminal shows: "🛡️ Security Bypass Active: Listening via Standard Mic"
+- User speaks → words appear in terminal in real-time
+
+---
+
+## Simple Dialer UI & Automatic Mic Wake-up
+
+### Problem
+Want to make calls directly from ScamShield instead of using system dialer. Need simple dialer UI and logic to keep ScamMonitorService active during calls.
+
+### Implementation Details
+
+#### Simple Dialer UI
+```java
+// In MainActivity.addDialerButton()
+// Create EditText for phone number input
+android.widget.EditText phoneInput = new android.widget.EditText(this);
+phoneInput.setHint("Enter phone number");
+phoneInput.setInputType(android.text.InputType.TYPE_CLASS_PHONE);
+
+// Create CALL button
+android.widget.Button callBtn = new android.widget.Button(this);
+callBtn.setText("📞 CALL");
+callBtn.setBackgroundColor(0xFF2196F3);  // Blue
+```
+
+#### Call Initiation Logic
+```java
+// Step 1: Start ScamMonitorService first (to hook into audio)
+startScamMonitorService();
+
+// Step 2: Make the call via Intent.ACTION_CALL
+Intent callIntent = new Intent(Intent.ACTION_CALL);
+callIntent.setData(android.net.Uri.parse("tel:" + phoneNumber));
+startActivity(callIntent);
+```
+
+#### Automatic Mic Wake-up
+```java
+// When CALL button is pressed, call startScamMonitorService() first
+// This ensures ScamMonitorService is running when the call connects
+// The service then starts GoogleSpeechRecognizer for real-time monitoring
+```
+
+### Permissions
+```xml
+<!-- Already in AndroidManifest.xml -->
+<uses-permission android:name="android.permission.CALL_PHONE" />
+```
+
+### Expected Behavior
+- User opens app → sees "📞 CALL" button with phone input
+- User enters number and clicks CALL
+- Service starts → call initiates
+- During call, ScamMonitorService detects scam keywords in real-time
+- If scam detected, alert pops up over calling screen
+
+### DO's & DON'Ts for Dialer UI
+
+**DO:**
+1. Start ScamMonitorService BEFORE making call (to hook into audio)
+2. Use Intent.ACTION_CALL for direct calling
+3. Add CALL_PHONE permission to manifest
+
+**DON'T:**
+1. DON'T make call before starting service (audio won't be monitored)
+2. DON'T skip error handling for call failure
+
+### Problem
+Make ScamShield compatible with Android 12 through Android 16.
+
+### Implementation Details
+
+#### Fix 1: Dynamic startForeground (API 31-36)
+```java
+// In ScamMonitorService.startForegroundWithNotification()
+// UNIVERSAL FIX: Dynamic startForeground for API 31-36 (Android 12-16)
+if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+    // Android 14, 15, 16 (API 34-36): Use microphone type flag
+    startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE);
+} else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+    // Android 12, 13 (API 31-33): Use microphone type flag
+    startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE);
+} else {
+    // Android 11 and below: No type flag needed
+    startForeground(NOTIFICATION_ID, notification);
+}
+```
+
+#### Fix 2: Universal Notification Permission
+```java
+// In MainActivity.checkAndRequestPermissions()
+// Already includes POST_NOTIFICATIONS permission in the array
+// Android 13+ will prompt for it
+String[] perms = {
+    Manifest.permission.RECORD_AUDIO,
+    Manifest.permission.READ_PHONE_STATE,
+    Manifest.permission.CALL_PHONE,
+    Manifest.permission.READ_CALL_LOG,
+    Manifest.permission.READ_CONTACTS,
+    Manifest.permission.POST_NOTIFICATIONS  // Android 13+ required
+};
+```
+
+#### Fix 3: Ziddi Manufacturers Fix (Samsung/Oppo/Redmi)
+```java
+// In MainActivity.checkBatteryOptimization()
+android.os.PowerManager pm = (android.os.PowerManager) getSystemService(POWER_SERVICE);
+if (pm != null && !pm.isIgnoringBatteryOptimizations(getPackageName())) {
+    showBatteryOptimizationDialog();
+}
+```
+
+### DO's & DON'Ts for Android 12-16 Compatibility
+
+**DO:**
+1. Use Build.VERSION_CODES.S (31) for Android 12 checks
+2. Use Build.VERSION_CODES.UPSIDE_DOWN_CAKE (33) for Android 14+ checks
+3. Request POST_NOTIFICATIONS permission for Android 13+
+4. Check battery optimization for Ziddi manufacturers
+5. **DO** call startForeground() as FIRST LINE in onStartCommand()
+6. **DO** include ALL required types: mediaProjection | microphone | phoneCall
+7. **DO** use timing logs to track elapsed time
+
+**DON'T:**
+1. DON'T use hardcoded API numbers (use Build.VERSION_CODES constants)
+2. DON'T skip POST_NOTIFICATIONS (service won't start on Android 13+)
+3. DON'T ignore battery optimization on Samsung/Oppo/Redmi
+4. **DON'T** call startForeground() after >5 seconds elapsed from onStartCommand()
+5. **DON'T** wait for RECORD_AUDIO or channel setup before calling startForeground
+6. **DON'T** start service from Fragment (causes SecurityException on Android 14)
+
+## Context Menu Implementation
+
+### History & Contacts Context Menu
+Added PopupMenu with Edit/Block/Call options:
+
+- **HistoryAdapter.java** - Added long-click context menu
+- **ContactsAdapter.java** - Added click context menu + quick call button
+- Null checks for Cursor operations to prevent crashes
+
+### DO (Context Menu)
+1. **DO** use PopupMenu for contextual actions
+2. **DO** add null checks for list/model in bindViewHolder
+3. **DO** use protected call method (startProtectedCall) for phone calls
+
+### DON'T (Context Menu)
+1. **DON'T** assume model is never null in bindViewHolder
+2. **DON'T** skip null checks on Cursor operations
+
+### Overview
+ScamShield now includes a Recording Settings screen to manage call recording and transcription. Users can choose to record all calls, only unknown calls (not in contacts), or disable recording. Transcripts can be saved as .txt files.
+
+### Architecture Components
+
+**RecordingSettings.java** - Manages SharedPreferences for recording preferences:
+```java
+public class RecordingSettings {
+    // Keys: KEY_RECORD_ALL_CALLS, KEY_RECORD_UNKNOWN_ONLY, KEY_SAVE_TRANSCRIPTS
+    public boolean shouldRecordCall(String phoneNumber, boolean isKnownContact);
+}
+```
+
+**ContactChecker.java** - Queries system contacts to check if number is known:
+```java
+public class ContactChecker {
+    public boolean isKnownContact(String phoneNumber);
+    // Uses ContactsContract.PhoneLookup for efficient lookup
+}
+```
+
+**TranscriptManager.java** - Saves transcripts to Documents/ScamShield/Transcripts/:
+```java
+public class TranscriptManager {
+    public String saveTranscript(String phoneNumber, String transcriptText);
+    // Android 10+: Uses MediaStore API
+    // Android 9 and below: Uses File system
+    // File naming: CallTranscript_[Number]_[Date]_[Time].txt
+}
+```
+
+### DO (Recording Settings)
+1. **DO** use SharedPreferences for settings storage with clear keys
+2. **DO** use ContactsContract.PhoneLookup for contact matching
+3. **DO** check READ_CONTACTS permission before querying contacts
+4. **DO** use MediaStore API for Android 10+ file saving
+5. **DO** use app-specific directory for transcripts
+6. **DO** append transcript in onSpeechRecognized() callback
+7. **DO** save transcript in stopListeningForScams() when recording enabled
+
+### DON'T (Recording Settings)
+1. **DON'T** assume contacts permission always granted
+2. **DON'T** block main thread with file operations
+3. **DON'T** save audio files permanently (transcripts only)
+4. **DON'T** record without checking user preferences

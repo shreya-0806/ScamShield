@@ -92,6 +92,15 @@
             android:visibility="gone"
             android:src="@android:drawable/ic_menu_edit"
             app:tint="#757575"/>
+
+        <ImageButton
+            android:id="@+id/btnCall"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:padding="8dp"
+            android:src="@android:drawable/ic_menu_call"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            app:tint="#4CAF50"/>
     </LinearLayout>
 
 </LinearLayout>

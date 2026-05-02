@@ -9,6 +9,18 @@ import java.util.Map;
 
 public class ScamDetector {
 
+    // Universal Scam Array - expanded for Android 15 compatibility
+    // Covers all common Indian scam patterns + international variations
+    private static final String[] SCAM_KEYWORDS = {
+        "otp", "cvv", "password", "pin", "bank", "kyc", "lottery", 
+        "blocked", "suspended", "gift card", "customer care", "account verification",
+        "verify your account", "aadhar", "pan card", "debit card", "credit card",
+        "upi", "paytm", "netbanking", "money", "transfer", "urgent", "immediate",
+        "verify", "confirm code", "one time password", "remote access", "teamviewer",
+        "anydesk", "suspended", "lock", "warrant", "police", "legal action",
+        "social security", "ssn", "prize", "winner", "tax"
+    };
+    
     private static final List<String> KEYWORDS =
             Arrays.asList("otp", "bank", "urgent", "account", "blocked", "kyc");
 

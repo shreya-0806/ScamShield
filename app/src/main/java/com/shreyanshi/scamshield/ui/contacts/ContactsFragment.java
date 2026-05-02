@@ -20,6 +20,7 @@ import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
 import com.shreyanshi.scamshield.R;
+import com.shreyanshi.scamshield.activities.MainActivity;
 import com.shreyanshi.scamshield.database.BlockedNumberDatabase;
 
 import java.util.ArrayList;
@@ -60,6 +61,10 @@ public class ContactsFragment extends Fragment {
 
         try {
             adapter = new ContactsAdapter(contactList, blockedDb);
+            // FIX: Pass MainActivity reference for protected calls
+            if (getActivity() instanceof MainActivity) {
+                adapter.setMainActivity((MainActivity) getActivity());
+            }
             recyclerView.setAdapter(adapter);
         } catch (Exception e) {
             Log.e(TAG, "Error creating adapter", e);

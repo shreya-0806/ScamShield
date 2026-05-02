@@ -10,17 +10,23 @@
     <uses-permission android:required="false" android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.READ_CALL_LOG" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ANSWER_PHONE_CALLS" />
     <uses-permission android:name="android.permission.BIND_INCALL_SERVICE" />
     <uses-permission android:name="android.permission.MANAGE_ONGOING_CALLS" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
 
     <!-- Package visibility for Android 11+ - Required for Google Speech Recognizer discovery -->
     <queries>
         <intent>
             <action android:name="android.intent.action.RECOGNIZE_SPEECH" />
+        </intent>
+        <!-- FIX 1: Query VOICE_CALL audio source availability -->
+        <intent>
+            <action android:name="android.intent.action.VOICE_COMMAND" />
         </intent>
     </queries>
 
@@ -39,15 +45,22 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!-- DIAL intent for tel: scheme -->
             <intent-filter>
                 <action android:name="android.intent.action.DIAL" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:scheme="tel" />
             </intent-filter>
+            <!-- DIAL intent for empty scheme (handles direct dial without tel: prefix) -->
+            <intent-filter>
+                <action android:name="android.intent.action.DIAL" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
             <intent-filter>
                 <action android:name="android.intent.action.CALL_BUTTON" />
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
+            <!-- Metadata declaring default dialer support -->
             <meta-data
                 android:name="android.app.dialer.default"
                 android:value="true" />
@@ -71,13 +84,50 @@
             android:exported="false"
             android:theme="@style/Theme.ScamShield" />
 
-        <service
+        <activity
+            android:name="com.shreyanshi.scamshield.activities.RecordingSettingsActivity"
+            android:exported="false"
+            android:theme="@style/Theme.ScamShield" />
+
+        <activity
+            android:name="com.shreyanshi.scamshield.activities.InCallActivity"
+            android:exported="true"
+            android:launchMode="singleInstance"
+            android:showOnLockScreen="true"
+            android:turnScreenOn="true"
+            android:theme="@style/Theme.ScamShield">
+            <!-- Intent filter for incoming call UI -->
+            <intent-filter>
+                <action android:name="android.intent.action.ANSWER" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+            <!-- Dialer replacement filters -->
+            <intent-filter>
+                <action android:name="android.intent.action.DIAL" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="tel" />
+            </intent-filter>
+            <!-- Incoming call screen replacement -->
+            <intent-filter>
+                <action android:name="android.telecom.InCallService" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+            <!-- Metadata for dialer support -->
+            <meta-data
+                android:name="android.app.dialer.default"
+                android:value="true" />
+            <meta-data
+                android:name="android.telecom.IN_CALL_SERVICE_UI"
+                android:value="true" />
+        </activity>
+
+<service
             android:name="com.shreyanshi.scamshield.services.ScamMonitorService"
             android:enabled="true"
             android:exported="false"
-            android:foregroundServiceType="microphone|specialUse">
+            android:foregroundServiceType="microphone|phoneCall">
             <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="Real-time scam detection and alerting during calls" />
+                android:value="scam_detection" />
         </service>
 
         <service
@@ -94,10 +144,18 @@
         <service
             android:name="com.shreyanshi.scamshield.services.ScamShieldInCallService"
             android:exported="true"
-            android:permission="android.permission.BIND_INCALL_SERVICE">
+            android:permission="android.permission.BIND_INCALL_SERVICE"
+            android:foregroundServiceType="phoneCall">
             <intent-filter>
                 <action android:name="android.telecom.InCallService" />
             </intent-filter>
+            <!-- Meta-data for dialer UI integration -->
+            <meta-data
+                android:name="android.telecom.IN_CALL_SERVICE_UI"
+                android:value="true" />
+            <meta-data
+                android:name="android.telecom.IN_CALL_SERVICE_RINGING"
+                android:value="true" />
         </service>
 
         <receiver android:name="com.shreyanshi.scamshield.services.CallReceiver"

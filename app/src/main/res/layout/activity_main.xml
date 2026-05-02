@@ -19,6 +19,29 @@
 
     </FrameLayout>
 
+    <!-- Internal Debug Terminal (40% of screen height) -->
+    <!-- Displays real-time logs: permissions, speech recognition events, errors -->
+    <ScrollView
+        android:id="@+id/debug_scroll_view"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="0.4"
+        android:background="#000000"
+        android:scrollbars="vertical">
+
+        <TextView
+            android:id="@+id/internal_debug_log"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textColor="#00FF00"
+            android:textSize="10sp"
+            android:typeface="monospace"
+            android:padding="8dp"
+            android:textIsSelectable="true"
+            android:text="[System] Debug terminal initialized\n" />
+
+    </ScrollView>
+
     <com.google.android.material.bottomnavigation.BottomNavigationView
         android:id="@+id/bottomNavigation"
         android:layout_width="match_parent"

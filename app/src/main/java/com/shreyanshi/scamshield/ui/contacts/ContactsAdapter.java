@@ -8,11 +8,13 @@ import android.content.Intent;
 import android.database.Cursor;
 import android.net.Uri;
 import android.provider.ContactsContract;
+import android.view.Gravity;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.ImageButton;
 import android.widget.ImageView;
+import android.widget.PopupMenu;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -20,6 +22,7 @@ import androidx.annotation.NonNull;
 import androidx.recyclerview.widget.RecyclerView;
 
 import com.shreyanshi.scamshield.R;
+import com.shreyanshi.scamshield.activities.MainActivity;
 import com.shreyanshi.scamshield.database.BlockedNumberDatabase;
 
 import java.util.ArrayList;
@@ -30,11 +33,19 @@ public class ContactsAdapter extends RecyclerView.Adapter<ContactsAdapter.ViewHo
     private List<ContactModel> contacts;
     private List<ContactModel> contactsFull;
     private BlockedNumberDatabase blockedDb;
+    private MainActivity mainActivity;
 
     public ContactsAdapter(List<ContactModel> contacts, BlockedNumberDatabase blockedDb) {
         this.contacts = contacts;
         this.contactsFull = new ArrayList<>(contacts);
         this.blockedDb = blockedDb;
+    }
+    
+    /**
+     * Set the MainActivity reference for protected calls
+     */
+    public void setMainActivity(MainActivity activity) {
+        this.mainActivity = activity;
     }
 
     @NonNull
@@ -74,11 +85,23 @@ public class ContactsAdapter extends RecyclerView.Adapter<ContactsAdapter.ViewHo
             holder.btnBlock.setColorFilter(0xFF757575);
         }
 
-        holder.itemView.setOnClickListener(v -> {
-            Intent intent = new Intent(Intent.ACTION_DIAL);
-            intent.setData(Uri.parse("tel:" + model.getNumber()));
-            v.getContext().startActivity(intent);
+holder.itemView.setOnClickListener(v -> {
+            // FIX: Show context menu with Edit/Call/Block options
+            showContextMenu(v, model, mainActivity);
         });
+
+        // FIX: Phone quick call button - immediately start call
+        if (holder.btnCall != null) {
+            holder.btnCall.setOnClickListener(v -> {
+                if (mainActivity != null) {
+                    mainActivity.startProtectedCall(model.getNumber());
+                } else {
+                    Intent intent = new Intent(Intent.ACTION_DIAL);
+                    intent.setData(Uri.parse("tel:" + model.getNumber()));
+                    v.getContext().startActivity(intent);
+                }
+            });
+        }
 
         holder.btnEdit.setVisibility(View.GONE);
 
@@ -156,6 +179,58 @@ public class ContactsAdapter extends RecyclerView.Adapter<ContactsAdapter.ViewHo
         }
         return -1;
     }
+    
+    /**
+     * Show context menu with Edit/Call/Block options
+     */
+    private void showContextMenu(View anchor, ContactModel model, MainActivity activity) {
+        if (model == null) return;
+        
+        PopupMenu popup = new PopupMenu(anchor.getContext(), anchor, Gravity.END);
+        popup.getMenuInflater().inflate(R.menu.menu_contacts_context, popup.getMenu());
+        
+        popup.setOnMenuItemClickListener(item -> {
+            int itemId = item.getItemId();
+            
+            if (itemId == R.id.action_edit) {
+                // Edit Contact - open dialer
+                Intent intent = new Intent(Intent.ACTION_DIAL);
+                intent.setData(Uri.parse("tel:" + model.getNumber()));
+                anchor.getContext().startActivity(intent);
+                return true;
+                
+            } else if (itemId == R.id.action_block) {
+                // Block Number
+                boolean currentlyBlocked = model.isBlocked();
+                if (currentlyBlocked) {
+                    blockedDb.unblockNumber(model.getNumber());
+                    model.setBlocked(false);
+                    Toast.makeText(anchor.getContext(), model.getName() + " unblocked", Toast.LENGTH_SHORT).show();
+                } else {
+                    blockedDb.blockNumber(model.getNumber());
+                    model.setBlocked(true);
+                    Toast.makeText(anchor.getContext(), model.getName() + " blocked", Toast.LENGTH_SHORT).show();
+                }
+                notifyItemChanged(contacts.indexOf(model));
+                return true;
+                
+            } else if (itemId == R.id.action_call) {
+                // Call
+                if (activity != null) {
+                    activity.startProtectedCall(model.getNumber());
+                } else {
+                    Intent intent = new Intent(Intent.ACTION_DIAL);
+                    intent.setData(Uri.parse("tel:" + model.getNumber()));
+                    anchor.getContext().startActivity(intent);
+                }
+                return true;
+            }
+            
+            return false;
+        });
+        
+        popup.show();
+    }
 
     @Override
     public int getItemCount() {
@@ -182,6 +257,8 @@ public class ContactsAdapter extends RecyclerView.Adapter<ContactsAdapter.ViewHo
     static class ViewHolder extends RecyclerView.ViewHolder {
         TextView tvName, tvNumber, tvInitial;
         ImageView btnEdit, btnBlock, btnStar, btnDelete;
+        ImageButton btnCall;
+        
         ViewHolder(@NonNull View itemView) {
             super(itemView);
             tvName = itemView.findViewById(R.id.tvName);
@@ -191,6 +268,7 @@ public class ContactsAdapter extends RecyclerView.Adapter<ContactsAdapter.ViewHo
             btnBlock = itemView.findViewById(R.id.btnBlock);
             btnStar = itemView.findViewById(R.id.btnStar);
             btnDelete = itemView.findViewById(R.id.btnDelete);
+            btnCall = itemView.findViewById(R.id.btnCall);
         }
     }
 }

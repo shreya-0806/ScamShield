@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<menu xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <item
+        android:id="@+id/action_edit"
+        android:title="Edit Number" />
+
+    <item
+        android:id="@+id/action_block"
+        android:title="Block Number" />
+
+    <item
+        android:id="@+id/action_call"
+        android:title="Call" />
+
+</menu>

@@ -432,11 +432,11 @@ public class MainActivity extends AppCompatActivity implements SpeechListener {
         }
     }
     
-    /**
-     * Start ScamMonitorService from MainActivity.
+/**
+     * Start ScamMonitorService from MainActivity foreground
      * 
-     * CRITICAL for Android 14 compliance:
-     * - Service MUST be started from Activity in foreground state (visible on screen)
+     * CRITICAL REQUIREMENTS (Android 14 Foreground Service):
+     * - Service MUST be started while MainActivity is VISIBLE (onStart completed)
      * - Service is NOT started from Fragment or background context
      * - Foreground notification shown within 5 seconds of service startup
      * - Microphone access allowed immediately after notification
@@ -446,29 +446,48 @@ public class MainActivity extends AppCompatActivity implements SpeechListener {
      * - Line 223: Service must be started while MainActivity is visible (in foreground)
      */
     private void startScamMonitorService() {
+        long startTime = System.currentTimeMillis();
+        appendLog("[" + formatTime(startTime) + "] 🚀 Starting ScamMonitorService from MainActivity foreground");
+        
+        Intent serviceIntent = new Intent(this, com.shreyanshi.scamshield.services.ScamMonitorService.class);
+        
+        // CRITICAL: Use try-catch to prevent crashes if OS denies service start
+        // This is required for Android 14+ with background restrictions
         try {
-            long startTime = System.currentTimeMillis();
-            appendLog("[" + formatTime(startTime) + "] 🚀 Starting ScamMonitorService from MainActivity foreground");
-            
-            Intent serviceIntent = new Intent(this, com.shreyanshi.scamshield.services.ScamMonitorService.class);
-            
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                // Android 8+ (API 26+): Use startForegroundService
                 startForegroundService(serviceIntent);
-                Log.i(TAG, "✅ startForegroundService() called");
+                appendLog("✅ startForegroundService() called (Android O+)");
+                Log.i(TAG, "✅ startForegroundService() started successfully");
             } else {
+                // Android 7 (API 24-25): Use startService
                 startService(serviceIntent);
-                Log.i(TAG, "✅ startService() called (Android 7)");
+                appendLog("✅ startService() called (Android 7)");
+                Log.i(TAG, "✅ startService() started successfully");
             }
             
+            // Save preference after successful start
             SharedPreferences prefs = getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
             prefs.edit().putBoolean("scam_alerts_enabled", true).apply();
             
-            appendLog("✅ ScamMonitorService started from MainActivity foreground");
-            Log.i(TAG, "✅ ScamMonitorService started - Android 14 eligible foreground state");
+            long elapsed = System.currentTimeMillis() - startTime;
+            appendLog("✅ Service started in " + elapsed + "ms");
+            Log.i(TAG, "✅ Service started in " + elapsed + "ms - Android eligible state satisfied");
             
         } catch (Exception e) {
-            Log.e(TAG, "❌ Error starting ScamMonitorService: " + e.getMessage());
-            appendLog("❌ Failed to start service: " + e.getMessage());
+            // Catch IllegalStateException and ForegroundServiceDidNotStartInTimeException
+            Log.e(TAG, "❌ CRITICAL ERROR starting service: " + e.getClass().getSimpleName() + " - " + e.getMessage());
+            appendLog("❌ Service start failed: " + e.getMessage());
+            
+            // Try fallback without foreground flag
+            try {
+                Log.w(TAG, "🔄 Retrying with startService() fallback...");
+                startService(serviceIntent);
+                appendLog("⚠️ Started with fallback startService()");
+            } catch (Exception e2) {
+                Log.e(TAG, "❌ Fallback also failed: " + e2.getMessage());
+                appendLog("❌ Fallback failed: " + e2.getMessage());
+            }
         }
     }
     
@@ -491,6 +510,22 @@ public class MainActivity extends AppCompatActivity implements SpeechListener {
             } else {
                 Log.i(TAG, "ℹ️ User declined default dialer role");
             }
+        }
+    }
+    
+    /**
+     * Start protected call - called from Contacts/History adapters
+     */
+    public void startProtectedCall(String phoneNumber) {
+        try {
+            Intent callIntent = new Intent(Intent.ACTION_CALL);
+            callIntent.setData(android.net.Uri.parse("tel:" + phoneNumber));
+            startActivity(callIntent);
+            Log.i(TAG, "📞 Starting protected call to: " + phoneNumber);
+            appendLog("📞 Calling: " + phoneNumber);
+        } catch (Exception e) {
+            Log.e(TAG, "Error starting call: " + e.getMessage());
+            appendLog("❌ Call error: " + e.getMessage());
         }
     }
 }

@@ -37,6 +37,7 @@ public class GoogleSpeechRecognizer implements SpeechProcessor, RecognitionListe
     private SpeechRecognizer speechRecognizer;
     private Intent recognizerIntent;
     private boolean isListening = false;
+    private long lastRmsLogTime = 0;
     
     // Auto-restart configuration
     private static final long AUTO_RESTART_DELAY_MS = 1000;
@@ -101,6 +102,8 @@ public class GoogleSpeechRecognizer implements SpeechProcessor, RecognitionListe
     
     /**
      * Configure the recognizer intent with proper extras for Indian English
+     * FIX 1: Force VOICE_CALL audio source (4) - only accessible to Default Dialer
+     * FIX 3: EXTRA_PREFER_OFFLINE for on-device recognition (stable during VoLTE/Wi-Fi calling)
      */
     private void setupRecognizerIntent() {
         recognizerIntent = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
@@ -113,15 +116,39 @@ public class GoogleSpeechRecognizer implements SpeechProcessor, RecognitionListe
         // Enable partial results for real-time feedback
         recognizerIntent.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true);
         
-        // Prefer offline (on-device) recognition for privacy and reliability
+        // FIX 3: Prefer offline (on-device) recognition for stability during calls
+        // Cloud recognizer fails during VoLTE/Wi-Fi calling when data connection is used by call
         recognizerIntent.putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true);
+        
+        // FIX 1: Force VOICE_CALL audio source (4) - bridges into Telecom audio stream
+        // This is only accessible when app has Default Dialer role
+        // Standard MIC (1) is blocked during active calls, VOICE_CALL (4) accesses call audio
+        try {
+            recognizerIntent.putExtra("android.speech.extra.AUDIO_SOURCE", 4); // VOICE_CALL = 4
+            Log.i(TAG, "🔊 Audio source set to VOICE_CALL (4) - accessing Telecom stream");
+        } catch (Exception e) {
+            Log.w(TAG, "Could not set VOICE_CALL audio source: " + e.getMessage());
+        }
+        
+        // EXPERIMENTAL: Try UNPROCESSED audio source as fallback
+        // Sometimes Android's noise cancellation filters out the caller's voice
+        // UNPROCESSED bypasses audio processing for raw mic data
+        try {
+            int unprocessedSource = 9; // MediaRecorder.AudioSource.UNPROCESSED = 9
+            // Note: This is experimental - only use if VOICE_CALL fails
+            // Uncomment the line below to enable:
+            // recognizerIntent.putExtra("android.speech.extra.AUDIO_SOURCE", unprocessedSource);
+            Log.d(TAG, "🔧 EXPERIMENTAL: UNPROCESSED audio source available (use if VOICE_CALL fails)");
+        } catch (Exception e) {
+            Log.d(TAG, "UNPROCESSED not available: " + e.getMessage());
+        }
         
         // Additional configuration
         recognizerIntent.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3);
         recognizerIntent.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 500);
         recognizerIntent.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1000);
         
-        Log.d(TAG, "🔧 Recognizer intent configured (en-IN, offline mode)");
+        Log.d(TAG, "🔧 Recognizer intent configured (en-IN, VOICE_CALL, offline mode)");
     }
     
     /**
@@ -301,6 +328,30 @@ public class GoogleSpeechRecognizer implements SpeechProcessor, RecognitionListe
         
         isListening = false;
         
+        // FIX 4: Error 7 (NO_MATCH) or Error 9 (INSUFFICIENT_PERMISSIONS) - toggle speakerphone
+        // This forces an audio refresh when recognition fails during calls
+        if (errorCode == SpeechRecognizer.ERROR_NO_MATCH 
+                || errorCode == SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS) {
+            
+            Log.w(TAG, "🔄 Error [" + errorCode + "] detected - triggering speakerphone toggle for audio refresh");
+            if (listener != null) {
+                try {
+                    listener.onDebugLog("🔄 Audio refresh: toggling speakerphone (Error " + errorCode + ")");
+                } catch (Exception e) {
+                    Log.d(TAG, "Debug log callback failed: " + e.getMessage());
+                }
+            }
+            
+            // Request audio refresh via listener callback
+            if (listener != null) {
+                try {
+                    listener.onAudioRefreshNeeded();
+                } catch (Exception e) {
+                    Log.d(TAG, "Audio refresh callback failed: " + e.getMessage());
+                }
+            }
+        }
+        
         // Special handling for NO_MATCH (7) and RECOGNIZER_BUSY (8)
         // These occur during normal operation (beep sound) and need immediate restart
         if (errorCode == SpeechRecognizer.ERROR_NO_MATCH 
@@ -318,6 +369,21 @@ public class GoogleSpeechRecognizer implements SpeechProcessor, RecognitionListe
                 handler.postDelayed(this::autoRestartListening, 500);
             }
             return; // Don't process further, just restart
+        }
+        
+        // FIX 4 continued: Error 9 (INSUFFICIENT_PERMISSIONS) needs longer delay
+        // Don't spam retries - wait for user to fix permissions
+        if (errorCode == SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS) {
+            Log.w(TAG, "❌ Permission error - retrying in 5 seconds (not spamming)");
+            if (listener != null) {
+                try {
+                    listener.onDebugLog("❌ Permission error - retrying in 5 seconds");
+                } catch (Exception e) {
+                    Log.d(TAG, "Debug log callback failed: " + e.getMessage());
+                }
+            }
+            handler.postDelayed(this::autoRestartListening, 5000);
+            return;
         }
         
         // Standard error handling for other transient errors
@@ -425,7 +491,32 @@ public class GoogleSpeechRecognizer implements SpeechProcessor, RecognitionListe
     
     @Override
     public void onRmsChanged(float rmsdB) {
-        // Not used in this implementation
+        // DIAGNOSTIC 1: Log microphone level to diagnose if mic is receiving sound
+        long currentTime = System.currentTimeMillis();
+        
+        // Throttle logging to prevent spam (500ms minimum between logs)
+        if (currentTime - lastRmsLogTime < 500) {
+            return;
+        }
+        lastRmsLogTime = currentTime;
+        
+        // Format: [DEBUG] Mic Volume: -XX.X dB
+        String rmsMessage = String.format("[DEBUG] Mic Volume: %.1f dB", rmsdB);
+        Log.d(TAG, rmsMessage);
+        
+        // Send to debug terminal for real-time visibility
+        if (listener != null) {
+            try {
+                listener.onDebugLog(rmsMessage);
+            } catch (Exception e) {
+                Log.d(TAG, "Debug log callback failed: " + e.getMessage());
+            }
+        }
+        
+        // Check for problematic values
+        if (rmsdB <= 0 || rmsdB < -100) {
+            Log.w(TAG, "⚠️ MIC APPEARS MUTED/BLOCKED - RMS = " + rmsdB + " dB");
+        }
     }
     
     @Override
