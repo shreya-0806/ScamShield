@@ -92,6 +92,7 @@ public class InCallActivity extends AppCompatActivity {
     private Call currentCall = null;
     private View bottomSection;
     private View callButtonRow;
+    private View incomingButtonRow;
     
     // Service binding
     private ServiceConnection serviceConnection;

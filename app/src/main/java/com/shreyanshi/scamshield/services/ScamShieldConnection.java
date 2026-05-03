@@ -57,8 +57,7 @@ public class ScamShieldConnection extends Connection {
             setConnectionCapabilities(
                 CAPABILITY_SUPPORT_HOLD |
                 CAPABILITY_HOLD |
-                CAPABILITY_MUTE |
-                CAPABILITY_RESPOND_VIA_SMS
+                CAPABILITY_MUTE
             );
         }
         
@@ -129,40 +128,6 @@ public class ScamShieldConnection extends Connection {
         this.isMuted = shouldMute;
         // Notify UI
         notifyAudioStateChanged();
-    }
-    
-    /**
-     * Called when call becomes RINGING (incoming only)
-     */
-    public void setRinging() {
-        setState(Connection.STATE_RINGING);
-        Log.i(TAG, "📞 Call state: RINGING");
-    }
-    
-    /**
-     * Called when call becomes DIALING (outgoing only)
-     */
-    public void setDialing() {
-        setState(Connection.STATE_DIALING);
-        Log.i(TAG, "📞 Call state: DIALING");
-    }
-    
-    /**
-     * Called when call becomes ACTIVE (answered/connected)
-     */
-    public void setActive() {
-        setState(Connection.STATE_ACTIVE);
-        Log.i(TAG, "✅ Call state: ACTIVE");
-        handleCallActive();
-    }
-    
-    /**
-     * Called when call is placed on HOLD
-     */
-    public void setOnHold() {
-        setState(Connection.STATE_HELD);
-        isOnHold = true;
-        Log.i(TAG, "⏸️ Call state: ON HOLD");
     }
     
     /**

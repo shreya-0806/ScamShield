@@ -64,8 +64,7 @@ public class ScamShieldConnectionService extends ConnectionService {
             connection.setConnectionCapabilities(
                 Connection.CAPABILITY_SUPPORT_HOLD |
                 Connection.CAPABILITY_HOLD |
-                Connection.CAPABILITY_MUTE |
-                Connection.CAPABILITY_RESPOND_VIA_SMS
+                Connection.CAPABILITY_MUTE
             );
             
             Log.i(TAG, "✅ IncomingConnection created successfully");
@@ -104,8 +103,7 @@ public class ScamShieldConnectionService extends ConnectionService {
             connection.setConnectionCapabilities(
                 Connection.CAPABILITY_SUPPORT_HOLD |
                 Connection.CAPABILITY_HOLD |
-                Connection.CAPABILITY_MUTE |
-                Connection.CAPABILITY_RESPOND_VIA_SMS
+                Connection.CAPABILITY_MUTE
             );
             
             Log.i(TAG, "✅ OutgoingConnection created successfully");
