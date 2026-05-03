@@ -90,9 +90,9 @@ public class InCallActivity extends AppCompatActivity {
     private Runnable durationRunnable;
     private String callerNumber = "";
     private Call currentCall = null;
-    private View bottomSection;
+    private View ongoingCallLayout;
     private View callButtonRow;
-    private View incomingButtonRow;
+    private View incomingCallLayout;
     
     // Service binding
     private ServiceConnection serviceConnection;
@@ -264,9 +264,9 @@ public class InCallActivity extends AppCompatActivity {
         tvSpeakerLabel = findViewById(R.id.tvSpeakerLabel);
         tvHoldLabel = findViewById(R.id.tvHoldLabel);
         tvRecordLabel = findViewById(R.id.tvRecordLabel);
-        bottomSection = findViewById(R.id.bottomSection);
+        ongoingCallLayout = findViewById(R.id.ongoing_call_layout);
         callButtonRow = findViewById(R.id.callButtonRow);
-        incomingButtonRow = findViewById(R.id.incomingButtonRow);  // Add for RINGING state control
+        incomingCallLayout = findViewById(R.id.incoming_call_layout);  // Add for RINGING state control
         
         // Answer button click
         btnAnswer.setOnClickListener(v -> {
@@ -322,46 +322,42 @@ public class InCallActivity extends AppCompatActivity {
     private void updateUIForCallState() {
         switch (callState) {
             case STATE_RINGING:
-                // Only btnAnswer and btnEndCall visible, all others hidden
+                // Only incoming answer/decline layout visible
                 tvCallStatus.setText("Incoming Call");
                 tvCallStatus.setTextColor(0xFF00FF00); // Green
                 
-                // Show answer and end call buttons row
-                if (callButtonRow != null) callButtonRow.setVisibility(View.VISIBLE);
+                if (incomingCallLayout != null) incomingCallLayout.setVisibility(View.VISIBLE);
+                if (ongoingCallLayout != null) ongoingCallLayout.setVisibility(View.GONE);
                 
-                // Show answer and end call buttons
                 btnAnswer.setVisibility(View.VISIBLE);
                 btnEndCall.setVisibility(View.VISIBLE);
+                btnEndCallLarge.setVisibility(View.GONE);
                 
-                // Hide all Mute/Speaker/Hold/Record buttons individually
                 btnMute.setVisibility(View.GONE);
                 btnSpeaker.setVisibility(View.GONE);
                 btnHold.setVisibility(View.GONE);
                 btnRecord.setVisibility(View.GONE);
-                if (bottomSection != null) bottomSection.setVisibility(View.GONE);
                 
                 tvCallDuration.setVisibility(View.GONE);
-                Log.i(TAG, "🔄 UI: RINGING - only answer/end buttons visible");
+                Log.i(TAG, "🔄 UI: RINGING - incoming call layout visible");
                 break;
                 
             case STATE_ACTIVE:
-                // btnAnswer hidden, all other buttons visible
+                // btnAnswer hidden, active call controls visible
                 tvCallStatus.setText("Call in Progress");
                 tvCallStatus.setTextColor(0xFF2196F3); // Blue
                 
-                // Hide answer button row (call is now active)
-                if (callButtonRow != null) callButtonRow.setVisibility(View.GONE);
+                if (incomingCallLayout != null) incomingCallLayout.setVisibility(View.GONE);
+                if (ongoingCallLayout != null) ongoingCallLayout.setVisibility(View.VISIBLE);
                 
-                // Hide answer button
                 btnAnswer.setVisibility(View.GONE);
+                btnEndCall.setVisibility(View.GONE);
+                btnEndCallLarge.setVisibility(View.VISIBLE);
                 
-                // Show all other buttons
-                btnEndCall.setVisibility(View.VISIBLE);
                 btnMute.setVisibility(View.VISIBLE);
                 btnSpeaker.setVisibility(View.VISIBLE);
                 btnHold.setVisibility(View.VISIBLE);
                 btnRecord.setVisibility(View.VISIBLE);
-                if (bottomSection != null) bottomSection.setVisibility(View.VISIBLE);
                 
                 tvCallDuration.setVisibility(View.VISIBLE);
                 startCallDurationTimer();
@@ -386,11 +382,13 @@ public class InCallActivity extends AppCompatActivity {
                 
                 btnAnswer.setVisibility(View.GONE);
                 btnEndCall.setVisibility(View.GONE);
+                btnEndCallLarge.setVisibility(View.GONE);
                 btnMute.setVisibility(View.GONE);
                 btnSpeaker.setVisibility(View.GONE);
                 btnHold.setVisibility(View.GONE);
                 btnRecord.setVisibility(View.GONE);
-                if (bottomSection != null) bottomSection.setVisibility(View.GONE);
+                if (incomingCallLayout != null) incomingCallLayout.setVisibility(View.GONE);
+                if (ongoingCallLayout != null) ongoingCallLayout.setVisibility(View.GONE);
                 if (callButtonRow != null) callButtonRow.setVisibility(View.GONE);
                 stopCallDurationTimer();
                 

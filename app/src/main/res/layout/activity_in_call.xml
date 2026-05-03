@@ -122,12 +122,12 @@
 
         <!-- INCOMING CALL BUTTONS (Accept/Decline) -->
         <LinearLayout
-            android:id="@+id/incomingButtonRow"
+            android:id="@+id/incoming_call_layout"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
             android:gravity="center"
-            android:visibility="visible"
+            android:visibility="gone"
             android:layout_marginBottom="16dp">
 
             <!-- Decline Button (RED) -->
@@ -154,9 +154,9 @@
 
         </LinearLayout>
 
-        <!-- ACTIVE CALL BUTTONS (Mute/Speaker/Hold/Record/End) -->
+        <!-- ONGOING / OUTGOING CALL BUTTONS (Mute/Speaker/Hold/Record/End) -->
         <LinearLayout
-            android:id="@+id/bottomSection"
+            android:id="@+id/ongoing_call_layout"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical"
