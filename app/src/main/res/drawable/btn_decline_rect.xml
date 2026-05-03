@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 
+    Decline/End Call Button (Rectangular)
+    Purpose: RED rectangular button for ending active calls
+    Used in: InCallActivity - active call screen (Row 2, End Call button)
+    Dimensions: Full width on the right side with 2:1 layout weight
+    Color: Red (#F44336) - indicates termination action
+    Corner Radius: 12dp for modern Material Design appearance
+-->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="#F44336" />
+    <corners android:radius="12dp" />
+</shape>

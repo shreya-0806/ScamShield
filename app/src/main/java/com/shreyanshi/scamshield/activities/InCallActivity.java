@@ -254,6 +254,7 @@ public class InCallActivity extends AppCompatActivity {
         avatarBackground = findViewById(R.id.avatarBackground);
         btnAnswer = findViewById(R.id.btnAnswer);
         btnEndCall = findViewById(R.id.btnEndCall);
+        btnEndCallLarge = findViewById(R.id.btnEndCallLarge);  // Large red button for active calls
         btnMute = findViewById(R.id.btnMute);
         btnSpeaker = findViewById(R.id.btnSpeaker);
         btnHold = findViewById(R.id.btnHold);
@@ -264,6 +265,7 @@ public class InCallActivity extends AppCompatActivity {
         tvRecordLabel = findViewById(R.id.tvRecordLabel);
         bottomSection = findViewById(R.id.bottomSection);
         callButtonRow = findViewById(R.id.callButtonRow);
+        incomingButtonRow = findViewById(R.id.incomingButtonRow);  // Add for RINGING state control
         
         // Answer button click
         btnAnswer.setOnClickListener(v -> {
@@ -295,6 +297,12 @@ public class InCallActivity extends AppCompatActivity {
         // Record button click
         btnRecord.setOnClickListener(v -> {
             toggleRecord();
+        });
+        
+        // Large end call button click (for active calls)
+        btnEndCallLarge.setOnClickListener(v -> {
+            Log.i(TAG, "📞 Large end call button clicked");
+            endCall();
         });
     }
     
