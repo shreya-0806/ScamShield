@@ -86,7 +86,6 @@ public class ScamShieldConnection extends Connection {
     /**
      * Reject incoming call
      */
-    @Override
     public void onReject() {
         Log.i(TAG, "📞 Reject button pressed");
         disconnect();
@@ -122,7 +121,6 @@ public class ScamShieldConnection extends Connection {
     /**
      * Mute microphone
      */
-    @Override
     public void onMute(boolean shouldMute) {
         Log.i(TAG, "🔇 " + (shouldMute ? "Muting" : "Unmuting") + " microphone");
         this.isMuted = shouldMute;
@@ -212,7 +210,6 @@ public class ScamShieldConnection extends Connection {
         return isOnHold;
     }
     
-    @Override
     public void onStateChanged(int state) {
         Log.d(TAG, "Connection state changed to: " + state);
         super.onStateChanged(state);

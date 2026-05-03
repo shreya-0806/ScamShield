@@ -5,6 +5,7 @@ import android.telecom.Connection;
 import android.telecom.ConnectionRequest;
 import android.telecom.ConnectionService;
 import android.telecom.DisconnectCause;
+import android.telecom.PhoneAccountHandle;
 import android.util.Log;
 
 import java.util.UUID;
@@ -42,7 +43,7 @@ public class ScamShieldConnectionService extends ConnectionService {
      * This happens when a call is received.
      */
     @Override
-    public Connection onCreateIncomingConnection(String connectionId, ConnectionRequest request) {
+    public Connection onCreateIncomingConnection(PhoneAccountHandle connectionManagerPhoneAccount, ConnectionRequest request) {
         Log.i(TAG, "✅ onCreateIncomingConnection() called - INCOMING CALL");
         
         try {
@@ -81,7 +82,7 @@ public class ScamShieldConnectionService extends ConnectionService {
      * This happens when user makes a call from ScamShield or other dialer.
      */
     @Override
-    public Connection onCreateOutgoingConnection(String connectionId, ConnectionRequest request) {
+    public Connection onCreateOutgoingConnection(PhoneAccountHandle connectionManagerPhoneAccount, ConnectionRequest request) {
         Log.i(TAG, "✅ onCreateOutgoingConnection() called - OUTGOING CALL");
         
         try {
@@ -119,8 +120,7 @@ public class ScamShieldConnectionService extends ConnectionService {
      * Called when system needs to create an unspecified connection.
      * Rare, but handle for safety.
      */
-    @Override
-    public Connection onCreateUnknownConnection(String connectionId, ConnectionRequest request) {
+    public Connection onCreateUnknownConnection(PhoneAccountHandle connectionManagerPhoneAccount, ConnectionRequest request) {
         Log.w(TAG, "⚠️ onCreateUnknownConnection() called");
         
         try {
@@ -134,13 +134,11 @@ public class ScamShieldConnectionService extends ConnectionService {
         }
     }
     
-    @Override
     public void onCreate() {
         super.onCreate();
         Log.i(TAG, "✅ ScamShieldConnectionService created");
     }
     
-    @Override
     public void onDestroy() {
         super.onDestroy();
         Log.i(TAG, "🛑 ScamShieldConnectionService destroyed");
