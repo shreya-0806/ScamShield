@@ -9,12 +9,16 @@ import android.content.ServiceConnection;
 import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.media.AudioManager;
+import android.media.Ringtone;
+import android.media.RingtoneManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
+import android.os.VibrationEffect;
+import android.os.Vibrator;
 import android.provider.ContactsContract;
 import android.telecom.Call;
 import android.telecom.VideoProfile;
@@ -88,6 +92,8 @@ public class InCallActivity extends AppCompatActivity {
     private boolean isSpeakerOn = false;
     private boolean isOnHold = false;
     private long callStartTime = 0;
+    private Ringtone ringtone;
+    private Vibrator vibrator;
     private Handler durationHandler;
     private Runnable durationRunnable;
     private String callerNumber = "";
@@ -297,42 +303,49 @@ public class InCallActivity extends AppCompatActivity {
         
         // Accept button click
         btnAccept.setOnClickListener(v -> {
-            Log.d("CALL_UI", "Accept clicked");
+            Log.d("CALL_DEBUG", "Button clicked: ACCEPT");
             android.telecom.Call call = ScamShieldInCallService.currentCall;
-            if (call != null) {
-                try {
-                    call.answer(VideoProfile.STATE_AUDIO_ONLY);
-                } catch (Exception e) {
-                    Log.e(TAG, "Accept error: " + e.getMessage());
-                }
+            if (call == null) {
+                Log.e("CALL_DEBUG", "Accept clicked but currentCall is null");
+                return;
+            }
+            try {
+                call.answer(VideoProfile.STATE_AUDIO_ONLY);
+            } catch (Exception e) {
+                Log.e(TAG, "Accept error: " + e.getMessage());
             }
         });
         
         // Decline button click
         btnDecline.setOnClickListener(v -> {
-            Log.d("CALL_UI", "Decline clicked");
+            Log.d("CALL_DEBUG", "Button clicked: DECLINE");
             android.telecom.Call call = ScamShieldInCallService.currentCall;
-            if (call != null) {
-                try {
-                    call.disconnect();
-                } catch (Exception e) {
-                    Log.e(TAG, "Decline error: " + e.getMessage());
-                }
+            if (call == null) {
+                Log.e("CALL_DEBUG", "Decline clicked but currentCall is null");
+                return;
+            }
+            try {
+                call.disconnect();
+            } catch (Exception e) {
+                Log.e(TAG, "Decline error: " + e.getMessage());
             }
         });
         
         // Mute button click
         btnMute.setOnClickListener(v -> {
+            Log.d("CALL_DEBUG", "Button clicked: MUTE");
             toggleMute();
         });
         
         // Speaker button click
         btnSpeaker.setOnClickListener(v -> {
+            Log.d("CALL_DEBUG", "Button clicked: SPEAKER");
             toggleSpeaker();
         });
         
         // Hold button click
         btnHold.setOnClickListener(v -> {
+            Log.d("CALL_DEBUG", "Button clicked: HOLD");
             toggleHold();
         });
         
@@ -343,14 +356,16 @@ public class InCallActivity extends AppCompatActivity {
         
         // Large end call button click (for active calls)
         btnEndCallLarge.setOnClickListener(v -> {
-            Log.d("CALL_UI", "End call clicked");
+            Log.d("CALL_DEBUG", "Button clicked: END");
             android.telecom.Call call = ScamShieldInCallService.currentCall;
-            if (call != null) {
-                try {
-                    call.disconnect();
-                } catch (Exception e) {
-                    Log.e(TAG, "End call error: " + e.getMessage());
-                }
+            if (call == null) {
+                Log.e("CALL_DEBUG", "End call clicked but currentCall is null");
+                return;
+            }
+            try {
+                call.disconnect();
+            } catch (Exception e) {
+                Log.e(TAG, "End call error: " + e.getMessage());
             }
         });
     }
@@ -393,6 +408,7 @@ public class InCallActivity extends AppCompatActivity {
                 if (btnAccept != null) btnAccept.setVisibility(View.VISIBLE);
                 if (btnDecline != null) btnDecline.setVisibility(View.VISIBLE);
 
+                startIncomingAlert();
                 Log.d("CALL_UI", "State: RINGING");
                 break;
 
@@ -425,6 +441,7 @@ public class InCallActivity extends AppCompatActivity {
                 if (tvCallDuration != null) tvCallDuration.setVisibility(View.VISIBLE);
                 if (callButtonRow != null) callButtonRow.setVisibility(View.VISIBLE);
 
+                stopIncomingAlert();
                 startCallDurationTimer();
                 if (previousState != STATE_ACTIVE) {
                     startScamDetection();
@@ -445,22 +462,55 @@ public class InCallActivity extends AppCompatActivity {
 
             default:
                 Log.d("CALL_UI", "State: UNKNOWN - hiding UI");
+                stopIncomingAlert();
                 break;
         }
     }
     
+    private void startIncomingAlert() {
+        if (ringtone == null) {
+            Uri alertUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE);
+            ringtone = RingtoneManager.getRingtone(this, alertUri);
+        }
+        if (ringtone != null && !ringtone.isPlaying()) {
+            ringtone.play();
+        }
+
+        if (vibrator == null) {
+            vibrator = (Vibrator) getSystemService(Context.VIBRATOR_SERVICE);
+        }
+        if (vibrator != null) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                vibrator.vibrate(VibrationEffect.createOneShot(800, VibrationEffect.DEFAULT_AMPLITUDE));
+            } else {
+                vibrator.vibrate(800);
+            }
+        }
+    }
+
+    private void stopIncomingAlert() {
+        if (ringtone != null && ringtone.isPlaying()) {
+            ringtone.stop();
+        }
+        if (vibrator != null) {
+            vibrator.cancel();
+        }
+    }
+
     /**
      * Toggle mute state
      */
     private void toggleMute() {
-        isMuted = !isMuted;
-        
         AudioManager audioManager = (AudioManager) getSystemService(AUDIO_SERVICE);
-        if (audioManager != null) {
-            audioManager.setMicrophoneMute(isMuted);
+        if (audioManager == null) {
+            Log.e(TAG, "AudioManager is null - cannot toggle mute");
+            return;
         }
-        
-        // Update UI
+
+        boolean currentlyMuted = audioManager.isMicrophoneMute();
+        audioManager.setMicrophoneMute(!currentlyMuted);
+        isMuted = audioManager.isMicrophoneMute();
+
         if (isMuted) {
             btnMute.setImageResource(R.drawable.ic_mic_off);
             tvMuteLabel.setText("Unmute");
@@ -479,30 +529,25 @@ public class InCallActivity extends AppCompatActivity {
      */
     private void toggleSpeaker() {
         AudioManager audioManager = (AudioManager) getSystemService(AUDIO_SERVICE);
-        if (audioManager == null) return;
-        
-        // Read current hardware state
+        if (audioManager == null) {
+            Log.e(TAG, "AudioManager is null - cannot toggle speaker");
+            return;
+        }
+
         boolean currentlyOn = audioManager.isSpeakerphoneOn();
-        
-        // Toggle: if currently on, turn off (earpiece); if off, turn on (speaker)
         audioManager.setSpeakerphoneOn(!currentlyOn);
-        
-        // Set audio mode for call
         audioManager.setMode(AudioManager.MODE_IN_COMMUNICATION);
-        
-        // Read NEW state after toggle for UI update
+
         boolean newState = audioManager.isSpeakerphoneOn();
-        
-        // Update UI based on NEW hardware state
         if (newState) {
             btnSpeaker.setImageResource(R.drawable.ic_speaker_on);
             tvSpeakerLabel.setText("Speaker");
-            tvSpeakerLabel.setTextColor(0xFF4CAF50); // Green
+            tvSpeakerLabel.setTextColor(0xFF4CAF50);
             Log.i(TAG, "🔊 Now on Speaker");
         } else {
             btnSpeaker.setImageResource(R.drawable.ic_speaker_off);
             tvSpeakerLabel.setText("Earpiece");
-            tvSpeakerLabel.setTextColor(0xFFFFFFFF); // White
+            tvSpeakerLabel.setTextColor(0xFFFFFFFF);
             Log.i(TAG, "🔇 Now on Earpiece");
         }
     }
@@ -512,25 +557,27 @@ public class InCallActivity extends AppCompatActivity {
      */
     private void toggleHold() {
         android.telecom.Call activeCall = ScamShieldInCallService.currentCall;
-        if (activeCall == null) return;
-        
+        if (activeCall == null) {
+            Log.e(TAG, "No active call to toggle hold");
+            return;
+        }
+
         try {
-            // Direct read from Telecom state
             int state = activeCall.getState();
             if (state == android.telecom.Call.STATE_HOLDING) {
-                // Currently on hold - unhold
                 activeCall.unhold();
                 btnHold.setImageResource(R.drawable.ic_hold);
                 tvHoldLabel.setText("Hold");
                 tvHoldLabel.setTextColor(0xFFFFFFFF);
                 Log.i(TAG, "▶️ Resumed from hold");
-            } else {
-                // Not on hold - hold
+            } else if (state == android.telecom.Call.STATE_ACTIVE) {
                 activeCall.hold();
                 btnHold.setImageResource(R.drawable.ic_hold_active);
                 tvHoldLabel.setText("Unhold");
                 tvHoldLabel.setTextColor(0xFFFF9800);
                 Log.i(TAG, "⏸️ Now on hold");
+            } else {
+                Log.w(TAG, "Hold toggle ignored for call state: " + state);
             }
         } catch (Exception e) {
             Log.e(TAG, "Hold error: " + e.getMessage());
