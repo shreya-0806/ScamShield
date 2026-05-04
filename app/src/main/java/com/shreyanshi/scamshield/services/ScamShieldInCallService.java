@@ -135,16 +135,7 @@ public class ScamShieldInCallService extends InCallService {
             currentCall = call;
             activeCallInstance = call;  // Direct hardware hook
             
-            // CRITICAL: Register Call.Callback for state changes
-            call.registerCallback(new Call.Callback() {
-                @Override
-                public void onStateChanged(Call call, int state) {
-                    Log.i(TAG, "📞 Call state changed: " + getStateString(state));
-                    notifyActivity(state);
-                }
-            });
-            
-            // CRITICAL: Audio path hook - answer and set audio mode
+            // CRITICAL: Audio path hook - set audio mode early for call routing
             if (audioManager != null) {
                 audioManager.setMode(AudioManager.MODE_IN_COMMUNICATION);
                 Log.i(TAG, "🔊 Audio mode set to MODE_IN_COMMUNICATION");
@@ -191,9 +182,6 @@ public class ScamShieldInCallService extends InCallService {
             
             // Start ongoing notification
             showCallNotification(handle, isCurrentCallIncoming);
-            
-            // Start ScamMonitorService
-            startScamMonitorServiceForCall(handle);
             
         } catch (Exception e) {
             Log.w(TAG, "Error on call added: " + e.getMessage());
@@ -252,67 +240,40 @@ public class ScamShieldInCallService extends InCallService {
             case Call.STATE_ACTIVE:
             case Call.STATE_DIALING:
             case Call.STATE_CONNECTING:
+            case Call.STATE_HOLDING:
                 ourState = STATE_ACTIVE;
                 
-                // CRITICAL: Set audio mode for active call - enables mic for speech recognition
+                // CRITICAL: Set audio mode for active/held call - enables mic for speech recognition and routing
                 if (audioManager != null) {
                     audioManager.setMode(AudioManager.MODE_IN_COMMUNICATION);
-                    
-                    // CRITICAL: Toggle to SPEAKER then back to force Audio Policy to refresh
-                    // This forces Android to re-evaluate microphone ownership
-                    audioManager.setSpeakerphoneOn(true);
-                    Log.d(TAG, "🔊 Set to SPEAKER (forcing audio policy refresh)");
-                    
-                    audioManager.setSpeakerphoneOn(false);
-                    Log.d(TAG, "🔊 Set back to EARPIECE (audio policy should be refreshed)");
-                    
-                    // TRICK: Toggle speakerphone to force Audio Policy Manager to refresh
-                    // This helps ScamMonitorService get audio focus as a secondary listener
-                    audioManager.setSpeakerphoneOn(true);
-                    audioManager.setSpeakerphoneOn(false);
-                    Log.i(TAG, "🔊 Speaker toggle trick applied to refresh audio policy");
-                    
-                    // CRITICAL: Force speakerphone ON during call - this routes call audio to speaker
-                    // The physical microphone can then "hear" the speaker output (acoustic echo loop)
-                    // This allows ScamMonitorService MIC to capture the caller's voice
-                    audioManager.setSpeakerphoneOn(true);
-                    Log.i(TAG, "🔊 FORCED SPEAKER ON - mic will hear speaker output (echo loop)");
-                    
-                    // CRITICAL HACK: Mute then immediately Unmute to "wake up" the audio pipeline
-                    // This often allows secondary listeners (like ScamMonitorService) to grab the stream
-                    handler.postDelayed(() -> {
-                        try {
-                            // Mute
-                            audioManager.setMicrophoneMute(true);
-                            Log.d(TAG, "🔇 Muted microphone");
-                            
-                            // Immediately unmute - this "wakes up" the audio pipeline
-                            handler.postDelayed(() -> {
-                                audioManager.setMicrophoneMute(false);
-                                Log.d(TAG, "🔊 Unmuted microphone - audio pipeline should be ready");
-                            }, 100);
-                        } catch (Exception e) {
-                            Log.w(TAG, "Mute/Unmute hack failed: " + e.getMessage());
-                        }
-                    }, 500); // Wait 500ms after call becomes active
-                    
-                    // Generate audio session ID for sharing with ScamMonitorService
-                    int audioSessionId = audioManager.generateAudioSessionId();
-                    Log.i(TAG, "🎵 Generated audio session ID: " + audioSessionId);
-                    
-                    // Pass session ID to broadcast for ScamMonitorService to use
-                    sendImmediateStartBroadcastWithSession(handle, audioSessionId);
-                    
-                    // Continue with notification and service start
-                    showCallNotification(handle, isCurrentCallIncoming);
-                    startScamMonitorServiceForCall(handle);
-                    return; // Early return since we're doing work here
                 }
                 
-                // If audioManager was null, still send broadcast without session ID
-                showCallNotification(handle, isCurrentCallIncoming);
-                sendImmediateStartBroadcast(handle);
-                startScamMonitorServiceForCall(handle);
+                if (state == Call.STATE_ACTIVE) {
+                    if (audioManager != null) {
+                        // CRITICAL: Use speakerphone toggle hack once when call becomes active
+                        audioManager.setSpeakerphoneOn(true);
+                        audioManager.setSpeakerphoneOn(false);
+                        Log.i(TAG, "🔊 Audio policy refreshed for active call");
+                        
+                        // Start the monitor service now that the call audio path is established
+                        int audioSessionId = audioManager.generateAudioSessionId();
+                        Log.i(TAG, "🎵 Generated audio session ID: " + audioSessionId);
+                        sendImmediateStartBroadcastWithSession(handle, audioSessionId);
+                        showCallNotification(handle, isCurrentCallIncoming);
+                        startScamMonitorServiceForCall(handle);
+                        return;
+                    }
+                    showCallNotification(handle, isCurrentCallIncoming);
+                    sendImmediateStartBroadcast(handle);
+                    startScamMonitorServiceForCall(handle);
+                    return;
+                }
+                break;
+            case Call.STATE_DISCONNECTING:
+                ourState = STATE_ACTIVE;
+                if (audioManager != null) {
+                    audioManager.setMode(AudioManager.MODE_IN_COMMUNICATION);
+                }
                 break;
             default:
                 ourState = STATE_DISCONNECTED;

@@ -336,18 +336,26 @@ public class InCallActivity extends AppCompatActivity {
                 Log.e("CALL_DEBUG", "Decline clicked but currentCall is null");
                 return;
             }
-            // Check if call is ringing or active before disconnecting
             int state = call.getState();
-            if (state != android.telecom.Call.STATE_RINGING && state != android.telecom.Call.STATE_ACTIVE) {
-                Log.w("CALL_DEBUG", "Decline clicked but call state is not RINGING/ACTIVE (state=" + state + ")");
+            if (state == android.telecom.Call.STATE_RINGING) {
+                try {
+                    call.reject(false, null);
+                    Log.i("CALL_DEBUG", "✅ Incoming call rejected successfully");
+                } catch (Exception e) {
+                    Log.e(TAG, "Reject error: " + e.getMessage());
+                }
                 return;
             }
-            try {
-                call.disconnect();
-                Log.i("CALL_DEBUG", "✅ Call declined/disconnected successfully");
-            } catch (Exception e) {
-                Log.e(TAG, "Decline error: " + e.getMessage());
+            if (state == android.telecom.Call.STATE_ACTIVE || state == android.telecom.Call.STATE_HOLDING || state == android.telecom.Call.STATE_CONNECTING || state == android.telecom.Call.STATE_DIALING) {
+                try {
+                    call.disconnect();
+                    Log.i("CALL_DEBUG", "✅ Call disconnected successfully");
+                } catch (Exception e) {
+                    Log.e(TAG, "Disconnect error: " + e.getMessage());
+                }
+                return;
             }
+            Log.w("CALL_DEBUG", "Decline clicked ignored for call state: " + state);
         });
         
         // Mute button click
@@ -381,9 +389,9 @@ public class InCallActivity extends AppCompatActivity {
                 Log.e("CALL_DEBUG", "End call clicked but currentCall is null");
                 return;
             }
-            // Check if call is active before disconnecting
-            if (call.getState() != android.telecom.Call.STATE_ACTIVE) {
-                Log.w("CALL_DEBUG", "End call clicked but call state is not ACTIVE (state=" + call.getState() + ")");
+            int state = call.getState();
+            if (state == android.telecom.Call.STATE_DISCONNECTED || state == android.telecom.Call.STATE_NEW) {
+                Log.w("CALL_DEBUG", "End call clicked ignored for state: " + state);
                 return;
             }
             try {
