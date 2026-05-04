@@ -130,27 +130,65 @@
             android:visibility="gone"
             android:layout_marginBottom="16dp">
 
-            <!-- Decline Button (RED) -->
-            <Button
-                android:id="@+id/btnEndCall"
-                android:layout_width="72dp"
-                android:layout_height="72dp"
-                android:layout_margin="16dp"
-                android:background="@drawable/btn_decline_circle"
-                android:contentDescription="Decline"
-                android:text=""
-                android:scaleType="centerInside" />
+            <!-- Decline Button -->
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical"
+                android:gravity="center"
+                android:layout_margin="8dp">
 
-            <!-- Accept Button (GREEN) -->
-            <Button
-                android:id="@+id/btnAnswer"
-                android:layout_width="72dp"
-                android:layout_height="72dp"
-                android:layout_margin="16dp"
-                android:background="@drawable/btn_accept_circle"
-                android:contentDescription="Accept"
-                android:text=""
-                android:scaleType="centerInside" />
+                <ImageButton
+                    android:id="@+id/btnDecline"
+                    android:layout_width="72dp"
+                    android:layout_height="72dp"
+                    android:background="@drawable/btn_decline_circle"
+                    android:src="@android:drawable/ic_menu_close_clear_cancel"
+                    android:tint="#FFFFFF"
+                    android:scaleType="centerInside"
+                    android:padding="16dp"
+                    android:contentDescription="Decline" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Decline"
+                    android:textColor="#FFFFFF"
+                    android:textSize="12sp"
+                    android:layout_marginTop="8dp" />
+
+            </LinearLayout>
+
+            <!-- Accept Button -->
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical"
+                android:gravity="center"
+                android:layout_margin="8dp">
+
+                <ImageButton
+                    android:id="@+id/btnAccept"
+                    android:layout_width="72dp"
+                    android:layout_height="72dp"
+                    android:background="@drawable/btn_accept_circle"
+                    android:src="@android:drawable/ic_menu_call"
+                    android:tint="#FFFFFF"
+                    android:scaleType="centerInside"
+                    android:padding="16dp"
+                    android:contentDescription="Accept" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Accept"
+                    android:textColor="#FFFFFF"
+                    android:textSize="12sp"
+                    android:layout_marginTop="8dp" />
+
+            </LinearLayout>
 
         </LinearLayout>
 

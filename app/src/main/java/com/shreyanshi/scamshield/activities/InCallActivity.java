@@ -17,6 +17,7 @@ import android.os.IBinder;
 import android.os.Looper;
 import android.provider.ContactsContract;
 import android.telecom.Call;
+import android.telecom.VideoProfile;
 import android.Manifest;
 import android.util.Log;
 import android.view.View;
@@ -59,6 +60,7 @@ public class InCallActivity extends AppCompatActivity {
     public static final int STATE_RINGING = 1;
     public static final int STATE_ACTIVE = 2;
     public static final int STATE_DISCONNECTED = 3;
+    public static final int STATE_DIALING = 4;
     
     // UI Components
     private TextView tvCallStatus;
@@ -68,8 +70,8 @@ public class InCallActivity extends AppCompatActivity {
     private TextView tvScamStatus;
     private TextView tvAvatarInitial;
     private View avatarBackground;
-    private Button btnAnswer;
-    private Button btnEndCall;
+    private Button btnAccept;
+    private Button btnDecline;
     private Button btnEndCallLarge;  // Large red button for active calls
     private ImageButton btnMute;
     private ImageButton btnSpeaker;
@@ -139,8 +141,7 @@ public class InCallActivity extends AppCompatActivity {
                 else if (ScamShieldInCallService.ACTION_CALL_ACTIVE.equals(action)) {
                     // Call became ACTIVE - update UI immediately
                     Log.i(TAG, "📞 CALL ACTIVE - updating UI");
-                    callState = STATE_ACTIVE;
-                    updateUIForCallState();
+                    updateUI(STATE_ACTIVE);
                 }
             }
         }
@@ -171,6 +172,7 @@ public class InCallActivity extends AppCompatActivity {
         
         // Get intent extras
         callerNumber = getIntent().getStringExtra(EXTRA_CALL_NUMBER);
+        callState = getIntent().getIntExtra(EXTRA_CALL_STATE, STATE_RINGING);
         
         // Initialize handler
         durationHandler = new Handler(Looper.getMainLooper());
@@ -192,7 +194,7 @@ public class InCallActivity extends AppCompatActivity {
         bindToScamMonitorService();
         
         // Update UI
-        updateUIForCallState();
+        updateUI(callState);
     }
     
     /**
@@ -253,8 +255,8 @@ public class InCallActivity extends AppCompatActivity {
         tvScamStatus = findViewById(R.id.tvScamStatus);
         tvAvatarInitial = findViewById(R.id.tvAvatarInitial);
         avatarBackground = findViewById(R.id.avatarBackground);
-        btnAnswer = findViewById(R.id.btnAnswer);
-        btnEndCall = findViewById(R.id.btnEndCall);
+        btnAccept = findViewById(R.id.btnAccept);
+        btnDecline = findViewById(R.id.btnDecline);
         btnEndCallLarge = findViewById(R.id.btnEndCallLarge);  // Large red button for active calls
         btnMute = findViewById(R.id.btnMute);
         btnSpeaker = findViewById(R.id.btnSpeaker);
@@ -268,16 +270,30 @@ public class InCallActivity extends AppCompatActivity {
         callButtonRow = findViewById(R.id.callButtonRow);
         incomingCallLayout = findViewById(R.id.incoming_call_layout);  // Add for RINGING state control
         
-        // Answer button click
-        btnAnswer.setOnClickListener(v -> {
-            Log.i(TAG, "📞 Answer button clicked");
-            answerCall();
+        // Accept button click
+        btnAccept.setOnClickListener(v -> {
+            Log.d("CALL_UI", "Accept clicked");
+            android.telecom.Call call = ScamShieldInCallService.currentCall;
+            if (call != null) {
+                try {
+                    call.answer(VideoProfile.STATE_AUDIO_ONLY);
+                } catch (Exception e) {
+                    Log.e(TAG, "Accept error: " + e.getMessage());
+                }
+            }
         });
         
-        // End call button click
-        btnEndCall.setOnClickListener(v -> {
-            Log.i(TAG, "📞 End call button clicked");
-            endCall();
+        // Decline button click
+        btnDecline.setOnClickListener(v -> {
+            Log.d("CALL_UI", "Decline clicked");
+            android.telecom.Call call = ScamShieldInCallService.currentCall;
+            if (call != null) {
+                try {
+                    call.disconnect();
+                } catch (Exception e) {
+                    Log.e(TAG, "Decline error: " + e.getMessage());
+                }
+            }
         });
         
         // Mute button click
@@ -302,8 +318,15 @@ public class InCallActivity extends AppCompatActivity {
         
         // Large end call button click (for active calls)
         btnEndCallLarge.setOnClickListener(v -> {
-            Log.i(TAG, "📞 Large end call button clicked");
-            endCall();
+            Log.d("CALL_UI", "End call clicked");
+            android.telecom.Call call = ScamShieldInCallService.currentCall;
+            if (call != null) {
+                try {
+                    call.disconnect();
+                } catch (Exception e) {
+                    Log.e(TAG, "End call error: " + e.getMessage());
+                }
+            }
         });
     }
     
@@ -316,88 +339,87 @@ public class InCallActivity extends AppCompatActivity {
     }
     
     /**
-     * Update UI based on call state
-     * TELECOM LISTENER: This is called when call state changes from RINGING to ACTIVE
+     * Update UI based on call state.
      */
-    private void updateUIForCallState() {
-        switch (callState) {
+    private void updateUI(int state) {
+        int previousState = callState;
+        callState = state;
+        Log.d("CALL_UI", "State: " + state);
+
+        // Hide everything by default
+        if (incomingCallLayout != null) incomingCallLayout.setVisibility(View.GONE);
+        if (ongoingCallLayout != null) ongoingCallLayout.setVisibility(View.GONE);
+        if (btnAccept != null) btnAccept.setVisibility(View.GONE);
+        if (btnDecline != null) btnDecline.setVisibility(View.GONE);
+        if (btnEndCallLarge != null) btnEndCallLarge.setVisibility(View.GONE);
+        if (btnMute != null) btnMute.setVisibility(View.GONE);
+        if (btnSpeaker != null) btnSpeaker.setVisibility(View.GONE);
+        if (btnHold != null) btnHold.setVisibility(View.GONE);
+        if (btnRecord != null) btnRecord.setVisibility(View.GONE);
+        if (callButtonRow != null) callButtonRow.setVisibility(View.GONE);
+        if (tvCallDuration != null) tvCallDuration.setVisibility(View.GONE);
+
+        switch (state) {
             case STATE_RINGING:
-                // Only incoming answer/decline layout visible
                 tvCallStatus.setText("Incoming Call");
-                tvCallStatus.setTextColor(0xFF00FF00); // Green
-                
+                tvCallStatus.setTextColor(0xFF4CAF50);
+
                 if (incomingCallLayout != null) incomingCallLayout.setVisibility(View.VISIBLE);
-                if (ongoingCallLayout != null) ongoingCallLayout.setVisibility(View.GONE);
-                
-                btnAnswer.setVisibility(View.VISIBLE);
-                btnEndCall.setVisibility(View.VISIBLE);
-                btnEndCallLarge.setVisibility(View.GONE);
-                
-                btnMute.setVisibility(View.GONE);
-                btnSpeaker.setVisibility(View.GONE);
-                btnHold.setVisibility(View.GONE);
-                btnRecord.setVisibility(View.GONE);
-                
-                tvCallDuration.setVisibility(View.GONE);
-                Log.i(TAG, "🔄 UI: RINGING - incoming call layout visible");
+                if (btnAccept != null) btnAccept.setVisibility(View.VISIBLE);
+                if (btnDecline != null) btnDecline.setVisibility(View.VISIBLE);
+
+                Log.d("CALL_UI", "State: RINGING");
                 break;
-                
-            case STATE_ACTIVE:
-                // btnAnswer hidden, active call controls visible
-                tvCallStatus.setText("Call in Progress");
-                tvCallStatus.setTextColor(0xFF2196F3); // Blue
-                
-                if (incomingCallLayout != null) incomingCallLayout.setVisibility(View.GONE);
+
+            case STATE_DIALING:
+                tvCallStatus.setText("Dialing");
+                tvCallStatus.setTextColor(0xFF2196F3);
+
                 if (ongoingCallLayout != null) ongoingCallLayout.setVisibility(View.VISIBLE);
-                
-                btnAnswer.setVisibility(View.GONE);
-                btnEndCall.setVisibility(View.GONE);
-                btnEndCallLarge.setVisibility(View.VISIBLE);
-                
-                btnMute.setVisibility(View.VISIBLE);
-                btnSpeaker.setVisibility(View.VISIBLE);
-                btnHold.setVisibility(View.VISIBLE);
-                btnRecord.setVisibility(View.VISIBLE);
-                
-                tvCallDuration.setVisibility(View.VISIBLE);
-                startCallDurationTimer();
-                
-                // Audio mode sync - ensure voice path is ready
-                AudioManager audioManager = (AudioManager) getSystemService(AUDIO_SERVICE);
-                if (audioManager != null) {
-                    audioManager.setMode(AudioManager.MODE_IN_COMMUNICATION);
-                    Log.i(TAG, "🔊 Audio mode set to MODE_IN_COMMUNICATION");
-                }
-                
-                Log.i(TAG, "🔄 UI: ACTIVE - all call controls visible");
-                
-                // Start scam detection ONLY when call becomes active
-                startScamDetection();
+                if (callButtonRow != null) callButtonRow.setVisibility(View.VISIBLE);
+                if (btnMute != null) btnMute.setVisibility(View.VISIBLE);
+                if (btnSpeaker != null) btnSpeaker.setVisibility(View.VISIBLE);
+                if (btnHold != null) btnHold.setVisibility(View.VISIBLE);
+                if (btnRecord != null) btnRecord.setVisibility(View.VISIBLE);
+                if (btnEndCallLarge != null) btnEndCallLarge.setVisibility(View.VISIBLE);
+
+                Log.d("CALL_UI", "State: DIALING");
                 break;
-                
+
+            case STATE_ACTIVE:
+                tvCallStatus.setText("Call in Progress");
+                tvCallStatus.setTextColor(0xFF2196F3);
+
+                if (ongoingCallLayout != null) ongoingCallLayout.setVisibility(View.VISIBLE);
+                if (callButtonRow != null) callButtonRow.setVisibility(View.VISIBLE);
+                if (btnMute != null) btnMute.setVisibility(View.VISIBLE);
+                if (btnSpeaker != null) btnSpeaker.setVisibility(View.VISIBLE);
+                if (btnHold != null) btnHold.setVisibility(View.VISIBLE);
+                if (btnRecord != null) btnRecord.setVisibility(View.VISIBLE);
+                if (btnEndCallLarge != null) btnEndCallLarge.setVisibility(View.VISIBLE);
+                if (tvCallDuration != null) tvCallDuration.setVisibility(View.VISIBLE);
+                if (callButtonRow != null) callButtonRow.setVisibility(View.VISIBLE);
+
+                startCallDurationTimer();
+                if (previousState != STATE_ACTIVE) {
+                    startScamDetection();
+                }
+                Log.d("CALL_UI", "State: ACTIVE");
+                break;
+
             case STATE_DISCONNECTED:
-                // Hide all buttons
-                tvCallStatus.setText("Call Ended");
-                tvCallStatus.setTextColor(0xFFFF9800); // Orange
-                
-                btnAnswer.setVisibility(View.GONE);
-                btnEndCall.setVisibility(View.GONE);
-                btnEndCallLarge.setVisibility(View.GONE);
-                btnMute.setVisibility(View.GONE);
-                btnSpeaker.setVisibility(View.GONE);
-                btnHold.setVisibility(View.GONE);
-                btnRecord.setVisibility(View.GONE);
-                if (incomingCallLayout != null) incomingCallLayout.setVisibility(View.GONE);
-                if (ongoingCallLayout != null) ongoingCallLayout.setVisibility(View.GONE);
-                if (callButtonRow != null) callButtonRow.setVisibility(View.GONE);
+                if (tvCallStatus != null) {
+                    tvCallStatus.setText("Call Ended");
+                    tvCallStatus.setTextColor(0xFFFF9800);
+                }
                 stopCallDurationTimer();
-                
-                // Stop scam detection when call ends
                 stopScamDetection();
-                
-                // Instant close
-                Log.i(TAG, "📞 Call disconnected - finishing activity NOW");
-                finishAndRemoveTask();
+                Log.d("CALL_UI", "State: DISCONNECTED");
+                finish();
+                break;
+
+            default:
+                Log.d("CALL_UI", "State: UNKNOWN - hiding UI");
                 break;
         }
     }
@@ -592,48 +614,26 @@ public class InCallActivity extends AppCompatActivity {
      * Answer the incoming call
      */
     private void answerCall() {
-        callState = STATE_ACTIVE;
-        
-        // Set audio mode for voice communication
+        // Set audio mode for voice communication only; state updates are handled by call lifecycle
         AudioManager audioManager = (AudioManager) getSystemService(AUDIO_SERVICE);
         if (audioManager != null) {
             audioManager.setMode(AudioManager.MODE_IN_COMMUNICATION);
-            audioManager.setSpeakerphoneOn(false); // Default to earpiece
+            audioManager.setSpeakerphoneOn(false);
         }
-        
-        updateUIForCallState();
-        
-        // Notify InCallService to answer the call via Telecom
-        notifyInCallServiceAnswer();
-        
-        Log.i(TAG, "✅ Call answered - audio mode: IN_COMMUNICATION");
+        Log.i(TAG, "✅ Answer call requested - audio mode set");
     }
     
     /**
      * End the current call - Direct hardware hook
      */
     private void endCall() {
-        // Reset audio first
         AudioManager audioManager = (AudioManager) getSystemService(AUDIO_SERVICE);
         if (audioManager != null) {
             audioManager.setMode(AudioManager.MODE_NORMAL);
             audioManager.setSpeakerphoneOn(false);
         }
-        
-        // Use static activeCallInstance - FIRST CLICK HANGUP
-        if (ScamShieldInCallService.activeCallInstance != null) {
-            try {
-                ScamShieldInCallService.activeCallInstance.disconnect();
-                Log.i(TAG, "📞 Disconnected via activeCallInstance");
-            } catch (Exception e) {
-                Log.e(TAG, "Disconnect error: " + e.getMessage());
-            }
-        }
-        
-        // CRITICAL: Immediately finish - no waiting
-        finishAndRemoveTask();
-        Log.i(TAG, "📞 End and remove task");
-}
+        Log.i(TAG, "✅ End call requested");
+    }
     
     /**
      * Notify InCallService to answer the call
