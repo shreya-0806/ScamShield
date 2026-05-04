@@ -70,9 +70,9 @@ public class InCallActivity extends AppCompatActivity {
     private TextView tvScamStatus;
     private TextView tvAvatarInitial;
     private View avatarBackground;
-    private Button btnAccept;
-    private Button btnDecline;
-    private Button btnEndCallLarge;  // Large red button for active calls
+    private ImageButton btnAccept;
+    private ImageButton btnDecline;
+    private View btnEndCallLarge;  // Large red button for active calls (safe fallback for mismatched inflation)
     private ImageButton btnMute;
     private ImageButton btnSpeaker;
     private ImageButton btnHold;
@@ -256,12 +256,37 @@ public class InCallActivity extends AppCompatActivity {
         tvAvatarInitial = findViewById(R.id.tvAvatarInitial);
         avatarBackground = findViewById(R.id.avatarBackground);
         btnAccept = findViewById(R.id.btnAccept);
+        if (btnAccept == null) {
+            Log.e("UI_ERROR", "btnAccept is null");
+        }
         btnDecline = findViewById(R.id.btnDecline);
-        btnEndCallLarge = findViewById(R.id.btnEndCallLarge);  // Large red button for active calls
+        if (btnDecline == null) {
+            Log.e("UI_ERROR", "btnDecline is null");
+        }
+        View endCallLargeView = findViewById(R.id.btnEndCallLarge);  // Large red button for active calls
+        btnEndCallLarge = endCallLargeView;
+        if (btnEndCallLarge == null) {
+            Log.e("UI_ERROR", "btnEndCallLarge is null");
+        } else {
+            Log.d("UI_DEBUG", "btnEndCallLarge view class=" + btnEndCallLarge.getClass().getName());
+        }
         btnMute = findViewById(R.id.btnMute);
+        if (btnMute == null) {
+            Log.e("UI_ERROR", "btnMute is null");
+        }
         btnSpeaker = findViewById(R.id.btnSpeaker);
+        if (btnSpeaker == null) {
+            Log.e("UI_ERROR", "btnSpeaker is null");
+        }
         btnHold = findViewById(R.id.btnHold);
+        if (btnHold == null) {
+            Log.e("UI_ERROR", "btnHold is null");
+        }
         btnRecord = findViewById(R.id.btnRecord);
+        if (btnRecord == null) {
+            Log.e("UI_ERROR", "btnRecord is null");
+        }
+        Log.d("UI_DEBUG", "All buttons initialized successfully");
         tvMuteLabel = findViewById(R.id.tvMuteLabel);
         tvSpeakerLabel = findViewById(R.id.tvSpeakerLabel);
         tvHoldLabel = findViewById(R.id.tvHoldLabel);
