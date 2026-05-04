@@ -592,6 +592,23 @@ public class ScamShieldInCallService extends InCallService {
         }
     }
 
+    /**
+     * Get human-readable state string for logging
+     */
+    private String getStateString(int state) {
+        switch (state) {
+            case Call.STATE_NEW: return "NEW";
+            case Call.STATE_RINGING: return "RINGING";
+            case Call.STATE_DIALING: return "DIALING";
+            case Call.STATE_ACTIVE: return "ACTIVE";
+            case Call.STATE_HOLDING: return "HOLDING";
+            case Call.STATE_DISCONNECTED: return "DISCONNECTED";
+            case Call.STATE_CONNECTING: return "CONNECTING";
+            case Call.STATE_DISCONNECTING: return "DISCONNECTING";
+            default: return "UNKNOWN";
+        }
+    }
+
     @Override
     public void onCreate() {
         super.onCreate();
