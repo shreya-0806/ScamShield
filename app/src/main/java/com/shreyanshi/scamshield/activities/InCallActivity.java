@@ -149,6 +149,12 @@ public class InCallActivity extends AppCompatActivity {
                     Log.i(TAG, "📞 CALL ACTIVE - updating UI");
                     updateUI(STATE_ACTIVE);
                 }
+                else if (ScamShieldInCallService.ACTION_CALL_STATE_UPDATE.equals(action)) {
+                    // Real-time state update from InCallService - sync UI with actual call state
+                    int newState = intent.getIntExtra(ScamShieldInCallService.EXTRA_CALL_STATE, callState);
+                    Log.i(TAG, "📞 STATE UPDATE - new state: " + newState + " (current: " + callState + ")");
+                    updateUI(newState);
+                }
             }
         }
     };
@@ -309,8 +315,14 @@ public class InCallActivity extends AppCompatActivity {
                 Log.e("CALL_DEBUG", "Accept clicked but currentCall is null");
                 return;
             }
+            // Check if call is actually ringing before answering
+            if (call.getState() != android.telecom.Call.STATE_RINGING) {
+                Log.w("CALL_DEBUG", "Accept clicked but call state is not RINGING (state=" + call.getState() + ")");
+                return;
+            }
             try {
                 call.answer(VideoProfile.STATE_AUDIO_ONLY);
+                Log.i("CALL_DEBUG", "✅ Call answered successfully");
             } catch (Exception e) {
                 Log.e(TAG, "Accept error: " + e.getMessage());
             }
@@ -324,8 +336,15 @@ public class InCallActivity extends AppCompatActivity {
                 Log.e("CALL_DEBUG", "Decline clicked but currentCall is null");
                 return;
             }
+            // Check if call is ringing or active before disconnecting
+            int state = call.getState();
+            if (state != android.telecom.Call.STATE_RINGING && state != android.telecom.Call.STATE_ACTIVE) {
+                Log.w("CALL_DEBUG", "Decline clicked but call state is not RINGING/ACTIVE (state=" + state + ")");
+                return;
+            }
             try {
                 call.disconnect();
+                Log.i("CALL_DEBUG", "✅ Call declined/disconnected successfully");
             } catch (Exception e) {
                 Log.e(TAG, "Decline error: " + e.getMessage());
             }
@@ -362,8 +381,14 @@ public class InCallActivity extends AppCompatActivity {
                 Log.e("CALL_DEBUG", "End call clicked but currentCall is null");
                 return;
             }
+            // Check if call is active before disconnecting
+            if (call.getState() != android.telecom.Call.STATE_ACTIVE) {
+                Log.w("CALL_DEBUG", "End call clicked but call state is not ACTIVE (state=" + call.getState() + ")");
+                return;
+            }
             try {
                 call.disconnect();
+                Log.i("CALL_DEBUG", "✅ Call ended successfully");
             } catch (Exception e) {
                 Log.e(TAG, "End call error: " + e.getMessage());
             }
@@ -815,6 +840,8 @@ public class InCallActivity extends AppCompatActivity {
         filter.addAction(ScamShieldInCallService.ACTION_FINISH_UI);
         // STEP 2: Listen for CALL_ACTIVE - triggers UI state transition
         filter.addAction(ScamShieldInCallService.ACTION_CALL_ACTIVE);
+        // STEP 3: Listen for real-time state updates from InCallService
+        filter.addAction(ScamShieldInCallService.ACTION_CALL_STATE_UPDATE);
         // Recording controls from InCallService
         filter.addAction("com.shreyanshi.scamshield.ACTION_START_RECORDING");
         filter.addAction("com.shreyanshi.scamshield.ACTION_STOP_RECORDING");

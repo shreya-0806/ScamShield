@@ -64,7 +64,9 @@ public class ScamShieldInCallService extends InCallService {
     public static final String ACTION_CALL_ACTIVE = "com.shreyanshi.scamshield.ACTION_CALL_ACTIVE";
     public static final String ACTION_CALL_DISCONNECTED = "com.shreyanshi.scamshield.ACTION_CALL_DISCONNECTED";
     public static final String ACTION_FINISH_UI = "com.shreyanshi.scamshield.ACTION_FINISH_UI";
+    public static final String ACTION_CALL_STATE_UPDATE = "com.shreyanshi.scamshield.ACTION_CALL_STATE_UPDATE";
     public static final String EXTRA_PHONE_NUMBER = "phone_number";
+    public static final String EXTRA_CALL_STATE = "state";
     
     // Current active call - STATIC for InCallActivity access
     public static Call currentCall = null;
@@ -132,6 +134,15 @@ public class ScamShieldInCallService extends InCallService {
             currentCallInstance = call;
             currentCall = call;
             activeCallInstance = call;  // Direct hardware hook
+            
+            // CRITICAL: Register Call.Callback for state changes
+            call.registerCallback(new Call.Callback() {
+                @Override
+                public void onStateChanged(Call call, int state) {
+                    Log.i(TAG, "📞 Call state changed: " + getStateString(state));
+                    notifyActivity(state);
+                }
+            });
             
             // CRITICAL: Audio path hook - answer and set audio mode
             if (audioManager != null) {
@@ -322,6 +333,9 @@ public class ScamShieldInCallService extends InCallService {
                 break;
         }
         
+        // CRITICAL: Broadcast state update to InCallActivity for real-time UI sync
+        notifyActivity(ourState);
+        
         // Update InCallActivity
         updateInCallActivity(handle, ourState);
         
@@ -363,6 +377,20 @@ public class ScamShieldInCallService extends InCallService {
             startActivity(intent);
         } catch (Exception e) {
             Log.e(TAG, "Error updating InCallActivity: " + e.getMessage());
+        }
+    }
+    
+    /**
+     * Broadcast state update to InCallActivity for real-time UI synchronization
+     */
+    private void notifyActivity(int state) {
+        try {
+            Intent intent = new Intent(ACTION_CALL_STATE_UPDATE);
+            intent.putExtra(EXTRA_CALL_STATE, state);
+            LocalBroadcastManager.getInstance(this).sendBroadcast(intent);
+            Log.d(TAG, "📡 Broadcasted state update: " + state);
+        } catch (Exception e) {
+            Log.e(TAG, "❌ Error broadcasting state update: " + e.getMessage());
         }
     }
     
