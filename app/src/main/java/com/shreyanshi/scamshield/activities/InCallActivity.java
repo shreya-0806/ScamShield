@@ -471,11 +471,16 @@ public class InCallActivity extends AppCompatActivity {
                 if (btnHold != null) btnHold.setVisibility(View.VISIBLE);
                 if (btnRecord != null) btnRecord.setVisibility(View.VISIBLE);
                 if (btnEndCallLarge != null) btnEndCallLarge.setVisibility(View.VISIBLE);
-                if (tvCallDuration != null) tvCallDuration.setVisibility(View.VISIBLE);
+                if (tvCallDuration != null) {
+                    tvCallDuration.setVisibility(View.VISIBLE);
+                    tvCallDuration.setText("00:00");
+                }
                 if (callButtonRow != null) callButtonRow.setVisibility(View.VISIBLE);
 
                 stopIncomingAlert();
-                startCallDurationTimer();
+                if (previousState != STATE_ACTIVE) {
+                    startCallDurationTimer();
+                }
                 if (previousState != STATE_ACTIVE) {
                     startScamDetection();
                 }
@@ -487,6 +492,7 @@ public class InCallActivity extends AppCompatActivity {
                     tvCallStatus.setText("Call Ended");
                     tvCallStatus.setTextColor(0xFFFF9800);
                 }
+                stopIncomingAlert();
                 stopCallDurationTimer();
                 stopScamDetection();
                 Log.d("CALL_UI", "State: DISCONNECTED");
@@ -567,9 +573,11 @@ public class InCallActivity extends AppCompatActivity {
             return;
         }
 
+        // Set audio mode BEFORE toggling speaker for proper routing
+        audioManager.setMode(AudioManager.MODE_IN_COMMUNICATION);
+
         boolean currentlyOn = audioManager.isSpeakerphoneOn();
         audioManager.setSpeakerphoneOn(!currentlyOn);
-        audioManager.setMode(AudioManager.MODE_IN_COMMUNICATION);
 
         boolean newState = audioManager.isSpeakerphoneOn();
         if (newState) {
@@ -768,22 +776,31 @@ public class InCallActivity extends AppCompatActivity {
      * Start call duration timer
      */
     private void startCallDurationTimer() {
+        if (durationRunnable != null) {
+            // Timer already running, do not restart and reset elapsed time.
+            return;
+        }
+
         callStartTime = System.currentTimeMillis();
-        
+
         durationRunnable = new Runnable() {
             @Override
             public void run() {
-                if (callState != STATE_ACTIVE) return;
-                
+                if (callState != STATE_ACTIVE) {
+                    return;
+                }
+
                 long elapsed = System.currentTimeMillis() - callStartTime;
                 long minutes = (elapsed / 1000) / 60;
                 long seconds = (elapsed / 1000) % 60;
                 String time = String.format("%02d:%02d", minutes, seconds);
-                tvCallDuration.setText(time);
+                if (tvCallDuration != null) {
+                    tvCallDuration.setText(time);
+                }
                 durationHandler.postDelayed(this, 1000);
             }
         };
-        
+
         durationHandler.post(durationRunnable);
     }
     
@@ -794,6 +811,9 @@ public class InCallActivity extends AppCompatActivity {
         if (durationRunnable != null) {
             durationHandler.removeCallbacks(durationRunnable);
             durationRunnable = null;
+        }
+        if (tvCallDuration != null) {
+            tvCallDuration.setText("00:00");
         }
     }
     
