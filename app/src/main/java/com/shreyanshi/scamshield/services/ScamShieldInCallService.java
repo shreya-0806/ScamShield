@@ -237,6 +237,7 @@ public class ScamShieldInCallService extends InCallService {
                     audioManager.setMode(AudioManager.MODE_RINGTONE);
                 }
                 break;
+            case Call.STATE_NEW:
             case Call.STATE_ACTIVE:
             case Call.STATE_DIALING:
             case Call.STATE_CONNECTING:
