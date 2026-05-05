@@ -259,12 +259,6 @@ public class ScamShieldInCallService extends InCallService {
                     audioManager.setMode(AudioManager.MODE_IN_COMMUNICATION);
                 }
                 break;
-            case Call.STATE_DISCONNECTING:
-                ourState = STATE_ACTIVE;
-                if (audioManager != null) {
-                    audioManager.setMode(AudioManager.MODE_IN_COMMUNICATION);
-                }
-                break;
             default:
                 ourState = STATE_DISCONNECTED;
                 // CRITICAL: Clear static reference
