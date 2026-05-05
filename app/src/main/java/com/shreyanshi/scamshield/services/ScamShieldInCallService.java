@@ -78,6 +78,7 @@ public class ScamShieldInCallService extends InCallService {
     public static final int STATE_RINGING = 1;
     public static final int STATE_ACTIVE = 2;
     public static final int STATE_DISCONNECTED = 3;
+    public static final int STATE_DIALING = 4;
     
     // Audio manager for audio routing
     private AudioManager audioManager;
@@ -238,36 +239,24 @@ public class ScamShieldInCallService extends InCallService {
                 }
                 break;
             case Call.STATE_NEW:
-            case Call.STATE_ACTIVE:
             case Call.STATE_DIALING:
             case Call.STATE_CONNECTING:
-            case Call.STATE_HOLDING:
-                ourState = STATE_ACTIVE;
-                
-                // CRITICAL: Set audio mode for active/held call - enables mic for speech recognition and routing
+                ourState = STATE_DIALING;
                 if (audioManager != null) {
                     audioManager.setMode(AudioManager.MODE_IN_COMMUNICATION);
                 }
-                
-                if (state == Call.STATE_ACTIVE) {
-                    if (audioManager != null) {
-                        // CRITICAL: Use speakerphone toggle hack once when call becomes active
-                        audioManager.setSpeakerphoneOn(true);
-                        audioManager.setSpeakerphoneOn(false);
-                        Log.i(TAG, "🔊 Audio policy refreshed for active call");
-                        
-                        // Start the monitor service now that the call audio path is established
-                        int audioSessionId = audioManager.generateAudioSessionId();
-                        Log.i(TAG, "🎵 Generated audio session ID: " + audioSessionId);
-                        sendImmediateStartBroadcastWithSession(handle, audioSessionId);
-                        showCallNotification(handle, isCurrentCallIncoming);
-                        startScamMonitorServiceForCall(handle);
-                        return;
-                    }
-                    showCallNotification(handle, isCurrentCallIncoming);
-                    sendImmediateStartBroadcast(handle);
-                    startScamMonitorServiceForCall(handle);
-                    return;
+                break;
+            case Call.STATE_ACTIVE:
+            case Call.STATE_HOLDING:
+                ourState = STATE_ACTIVE;
+                if (audioManager != null) {
+                    audioManager.setMode(AudioManager.MODE_IN_COMMUNICATION);
+                }
+                break;
+            case Call.STATE_DISCONNECTING:
+                ourState = STATE_ACTIVE;
+                if (audioManager != null) {
+                    audioManager.setMode(AudioManager.MODE_IN_COMMUNICATION);
                 }
                 break;
             case Call.STATE_DISCONNECTING:
@@ -301,6 +290,24 @@ public class ScamShieldInCallService extends InCallService {
         // Update InCallActivity
         updateInCallActivity(handle, ourState);
         
+        // Start monitor service only when call is active
+        if (state == Call.STATE_ACTIVE) {
+            if (audioManager != null) {
+                audioManager.setSpeakerphoneOn(true);
+                audioManager.setSpeakerphoneOn(false);
+                Log.i(TAG, "🔊 Audio policy refreshed for active call");
+            }
+            if (audioManager != null) {
+                int audioSessionId = audioManager.generateAudioSessionId();
+                Log.i(TAG, "🎵 Generated audio session ID: " + audioSessionId);
+                sendImmediateStartBroadcastWithSession(handle, audioSessionId);
+            } else {
+                sendImmediateStartBroadcast(handle);
+            }
+            showCallNotification(handle, isCurrentCallIncoming);
+            startScamMonitorServiceForCall(handle);
+        }
+        
         // Stop scam detection when call ends
         if (state == Call.STATE_DISCONNECTED || state == Call.STATE_DISCONNECTING) {
             stopScamMonitorService();
@@ -317,7 +324,14 @@ public class ScamShieldInCallService extends InCallService {
      */
     private void launchInCallActivity(String number, int state, boolean isIncoming) {
         try {
-            int ourState = (state == Call.STATE_RINGING) ? STATE_RINGING : STATE_ACTIVE;
+            int ourState;
+            if (state == Call.STATE_RINGING) {
+                ourState = STATE_RINGING;
+            } else if (state == Call.STATE_NEW || state == Call.STATE_DIALING || state == Call.STATE_CONNECTING) {
+                ourState = STATE_DIALING;
+            } else {
+                ourState = STATE_ACTIVE;
+            }
             
             Intent intent = InCallActivity.createIntent(this, number, ourState, isIncoming);
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
@@ -334,7 +348,7 @@ public class ScamShieldInCallService extends InCallService {
      */
     private void updateInCallActivity(String number, int state) {
         try {
-            Intent intent = InCallActivity.createIntent(this, number, state, true);
+            Intent intent = InCallActivity.createIntent(this, number, state, isCurrentCallIncoming);
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
             startActivity(intent);
         } catch (Exception e) {
