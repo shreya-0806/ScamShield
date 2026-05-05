@@ -1,142 +1,86 @@
 package com.shreyanshi.scamshield.services;
 
-import android.content.Intent;
-import android.media.AudioManager;
-import android.os.Handler;
-import android.os.Looper;
 import android.telecom.Call;
 import android.telecom.InCallService;
+import android.telecom.VideoProfile;
+import android.content.Intent;
+import android.os.Build;
 import android.util.Log;
-
 import androidx.localbroadcastmanager.content.LocalBroadcastManager;
-
+import com.shreyanshi.scamshield.R;
 import com.shreyanshi.scamshield.activities.InCallActivity;
 
 public class ScamShieldInCallService extends InCallService {
-
-    private static final String TAG = "ScamShield-InCall";
-
-    public static final String ACTION_CALL_STATE_UPDATE =
-            "com.shreyanshi.scamshield.ACTION_CALL_STATE_UPDATE";
-
-    public static final String EXTRA_CALL_STATE = "state";
-
-    public static final int STATE_RINGING = 1;
-    public static final int STATE_ACTIVE = 2;
-    public static final int STATE_DISCONNECTED = 3;
-
+    private static final String TAG = "ScamShieldInCallService";
     public static Call currentCall = null;
+    private LocalBroadcastManager localBroadcastManager;
+    private Call.Callback callCallback;
 
-    private boolean isActivityLaunched = false;
-
-    private AudioManager audioManager;
-
-    private final Handler handler = new Handler(Looper.getMainLooper());
+    public static final String ACTION_CALL_STATE_CHANGED = "com.shreyanshi.scamshield.ACTION_CALL_STATE_CHANGED";
+    public static final String ACTION_CALL_ACTIVE = "com.shreyanshi.scamshield.ACTION_CALL_ACTIVE";
+    public static final String ACTION_CALL_DISCONNECTED = "com.shreyanshi.scamshield.ACTION_CALL_DISCONNECTED";
+    public static final String EXTRA_CALL_STATE = "call_state";
+    public static final String EXTRA_PHONE_NUMBER = "phone_number";
 
     @Override
     public void onCreate() {
         super.onCreate();
-        audioManager = (AudioManager) getSystemService(AUDIO_SERVICE);
-        Log.i(TAG, "Service created");
+        localBroadcastManager = LocalBroadcastManager.getInstance(this);
+        callCallback = new Call.Callback() {
+            @Override
+            public void onStateChanged(Call call, int state) {
+                super.onStateChanged(call, state);
+                Log.d(TAG, "Call state changed: " + state);
+                Intent intent = new Intent(ACTION_CALL_STATE_CHANGED);
+                intent.putExtra(EXTRA_CALL_STATE, state);
+                intent.putExtra(EXTRA_PHONE_NUMBER, getPhoneNumber(call));
+                localBroadcastManager.sendBroadcast(intent);
+
+                if (state == Call.STATE_DISCONNECTED || state == Call.STATE_DISCONNECTING) {
+                    if (currentCall == call) {
+                        currentCall = null;
+                    }
+                    Log.i(TAG, "Call disconnected");
+                }
+            }
+        };
+        Log.i(TAG, "InCallService created");
     }
 
     @Override
     public void onCallAdded(Call call) {
         super.onCallAdded(call);
-
+        String phoneNumber = getPhoneNumber(call);
+        Log.i(TAG, "Call added: " + phoneNumber);
         currentCall = call;
-
-        String number = getNumber(call);
-
-        Log.i(TAG, "📞 Call added: " + number);
-
         call.registerCallback(callCallback);
 
-        launchInCallActivity(number, STATE_RINGING);
+        Intent activityIntent = new Intent(this, InCallActivity.class);
+        activityIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+        activityIntent.putExtra(EXTRA_CALL_STATE, call.getState());
+        activityIntent.putExtra(EXTRA_PHONE_NUMBER, phoneNumber);
+        startActivity(activityIntent);
     }
 
     @Override
     public void onCallRemoved(Call call) {
         super.onCallRemoved(call);
-
-        Log.i(TAG, "📞 Call removed");
-
-        if (call != null) {
-            call.unregisterCallback(callCallback);
+        Log.i(TAG, "Call removed: " + getPhoneNumber(call));
+        if (currentCall == call) {
+            currentCall = null;
         }
+    }
 
+    @Override
+    public void onDestroy() {
+        super.onDestroy();
         currentCall = null;
-        isActivityLaunched = false;
-
-        sendState(STATE_DISCONNECTED);
+        Log.i(TAG, "InCallService destroyed");
     }
 
-    private final Call.Callback callCallback = new Call.Callback() {
-        @Override
-        public void onStateChanged(Call call, int state) {
-            handleStateChange(call, state);
-        }
-    };
-
-    private void handleStateChange(Call call, int state) {
-
-        int ourState;
-
-        switch (state) {
-            case Call.STATE_RINGING:
-                ourState = STATE_RINGING;
-                break;
-
-            case Call.STATE_ACTIVE:
-                ourState = STATE_ACTIVE;
-                break;
-
-            case Call.STATE_DISCONNECTED:
-                ourState = STATE_DISCONNECTED;
-                isActivityLaunched = false;
-                break;
-
-            default:
-                return;
-        }
-
-        Log.i(TAG, "📡 State: " + ourState);
-
-        sendState(ourState);
-    }
-
-    private void sendState(int state) {
-        Intent intent = new Intent(ACTION_CALL_STATE_UPDATE);
-        intent.putExtra(EXTRA_CALL_STATE, state);
-        LocalBroadcastManager.getInstance(this).sendBroadcast(intent);
-    }
-
-    private void launchInCallActivity(String number, int state) {
-        if (isActivityLaunched) return;
-
-        try {
-            Intent intent = InCallActivity.createIntent(this, number, state, true);
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            intent.addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP);
-
-            startActivity(intent);
-
-            isActivityLaunched = true;
-
-            Log.i(TAG, "✅ Activity launched");
-
-        } catch (Exception e) {
-            Log.e(TAG, "Error launching activity: " + e.getMessage());
-        }
-    }
-
-    private String getNumber(Call call) {
-        if (call.getDetails() != null &&
-                call.getDetails().getHandle() != null) {
-
-            return call.getDetails()
-                    .getHandle()
-                    .getSchemeSpecificPart();
+    private String getPhoneNumber(Call call) {
+        if (call.getDetails() != null && call.getDetails().getHandle() != null) {
+            return call.getDetails().getHandle().getSchemeSpecificPart();
         }
         return "Unknown";
     }
