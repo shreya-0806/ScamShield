@@ -317,38 +317,37 @@ public class ScamShieldInCallService extends InCallService {
      * Launch InCallActivity with call details
      */
     private void launchInCallActivity(String number, int state, boolean isIncoming) {
-        try {
-            int ourState;
-            if (state == Call.STATE_RINGING) {
-                ourState = STATE_RINGING;
-            } else if (state == Call.STATE_NEW || state == Call.STATE_DIALING || state == Call.STATE_CONNECTING) {
-                ourState = STATE_DIALING;
-            } else {
-                ourState = STATE_ACTIVE;
-            }
-            
-            Intent intent = InCallActivity.createIntent(this, number, ourState, isIncoming);
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            startActivity(intent);
-            
-            Log.i(TAG, "✅ InCallActivity launched for: " + number);
-        } catch (Exception e) {
-            Log.e(TAG, "❌ Error launching InCallActivity: " + e.getMessage());
-        }
+    try {
+        Intent intent = InCallActivity.createIntent(this, number, state, isIncoming);
+
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        intent.addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP);
+
+        startActivity(intent);
+
+        Log.i(TAG, "✅ InCallActivity launched");
+
+    } catch (Exception e) {
+        Log.e(TAG, "❌ Error launching InCallActivity: " + e.getMessage());
     }
+   }
     
     /**
      * Update existing InCallActivity with new state
      */
     private void updateInCallActivity(String number, int state) {
-        try {
-            Intent intent = InCallActivity.createIntent(this, number, state, isCurrentCallIncoming);
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
-            startActivity(intent);
-        } catch (Exception e) {
-            Log.e(TAG, "Error updating InCallActivity: " + e.getMessage());
-        }
+    try {
+        Intent intent = new Intent(ACTION_CALL_STATE_UPDATE);
+        intent.putExtra(EXTRA_CALL_STATE, state);
+
+        LocalBroadcastManager.getInstance(this).sendBroadcast(intent);
+
+        Log.d(TAG, "📡 UI update broadcast sent: " + state);
+
+    } catch (Exception e) {
+        Log.e(TAG, "Error updating UI: " + e.getMessage());
     }
+}
     
     /**
      * Broadcast state update to InCallActivity for real-time UI synchronization
